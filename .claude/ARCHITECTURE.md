@@ -5,7 +5,7 @@
 ```
 ┌──────────────────────────────────────────────────────────┐
 │  Planning Layer                                          │
-│  - Claude Sonnet 4.5 via Anthropic Python SDK            │
+│  - GPT-4o via OpenAI Python SDK                          │
 │  - Function calling for action emission                  │
 │  - Structured JSON input from conductor                  │
 └──────────────────────────────────────────────────────────┘
@@ -28,10 +28,10 @@
 
 ## Stack
 
-**Planning model:** Claude Sonnet 4.5 (`claude-sonnet-4-5`) via Anthropic Python SDK.
+**Planning model:** GPT-4o (`gpt-4o`) via OpenAI Python SDK.
 Function calling for action emission. Model sees filtered SemanticMap JSON (focused window
-+ registry), not the full tree. Prompt caching enabled on the system prompt
-(`cache_control: {"type": "ephemeral"}`).
++ registry), not the full tree. Prompt caching is automatic for prompts >1024 tokens
+(no opt-in needed with the OpenAI SDK).
 
 **Why Python for v1:** `uiautomation` wraps IUIAutomation COM cleanly — no Rust equivalent.
 CDP WebSocket + JSON is 10 lines in Python, not 200. Rapid prompt iteration (edit + rerun,
@@ -48,7 +48,7 @@ comtypes==1.4.5        # Raw COM access when uiautomation isn't enough
 psutil==6.0.0          # Process enumeration for CDP target discovery
 websockets==13.0       # CDP WebSocket transport
 httpx==0.27.0          # CDP /json/list HTTP endpoint
-anthropic==0.39.0      # Planning model (Anthropic SDK)
+openai==1.51.0         # Planning model (OpenAI SDK)
 fastapi==0.115.0       # Local conductor HTTP API
 uvicorn==0.30.0        # ASGI server for conductor
 pydantic==2.9.0        # Semantic map schema validation
@@ -148,11 +148,11 @@ async def run_task(task: str, max_turns: int = 50, timeout: float = 300.0) -> di
         semantic_map = await conductor.get_current_state(scope="focused+registry")
         response = await asyncio.get_event_loop().run_in_executor(
             None,
-            lambda: client.messages.create(
-                model="claude-sonnet-4-5",
-                system=SYSTEM_PROMPT,                   # system is a top-level param, not a message
+            lambda: client.chat.completions.create(
+                model="gpt-4o",
                 tools=[focus_window_tool, observe_tool, set_value_tool, ...],
                 messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": task},
                     *history,
                     {"role": "user", "content": semantic_map.model_dump_json()}
@@ -160,31 +160,51 @@ async def run_task(task: str, max_turns: int = 50, timeout: float = 300.0) -> di
             )
         )
 
-        if response.stop_reason == "end_turn":
+        choice = response.choices[0]
+
+        if choice.finish_reason == "stop":
             return {"status": "complete", "turns": turn + 1}
 
-        # Correct Anthropic tool-use history format:
-        # Assistant turn: content is the raw response.content list (may include text + tool_use blocks)
-        history.append({"role": "assistant", "content": response.content})
+        # OpenAI tool-use history format:
+        # Assistant turn: include content + tool_calls from the response message
+        history.append({
+            "role": "assistant",
+            "content": choice.message.content,
+            "tool_calls": choice.message.tool_calls
+        })
 
-        # User turn: one tool_result block per tool_use block in the assistant message
-        tool_results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                result = await conductor.execute(Action(**block.input))
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": str(result)
-                })
-        if tool_results:
-            history.append({"role": "user", "content": tool_results})
+        # Tool result turns: one message per tool call, role="tool"
+        for tool_call in (choice.message.tool_calls or []):
+            result = await conductor.execute(
+                Action(**json.loads(tool_call.function.arguments))
+            )
+            history.append({
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": str(result)
+            })
 
     return {"status": "max_turns", "turns": max_turns}
 ```
 
-**History format invariant**: Every `tool_use` block in an assistant message must have a matching
-`tool_result` in the following user message, keyed by `tool_use_id`. Mismatches cause API errors.
+**Tool schema format** (OpenAI function calling):
+```python
+focus_window_tool = {
+    "type": "function",
+    "function": {
+        "name": "focus_window",
+        "description": "Bring a window to the foreground by id",
+        "parameters": {
+            "type": "object",
+            "properties": {"window_id": {"type": "string"}},
+            "required": ["window_id"]
+        }
+    }
+}
+```
+
+**History format invariant**: Every assistant message with `tool_calls` must be followed by
+one `role: "tool"` message per call, keyed by `tool_call_id`. Mismatches cause API errors.
 
 ## CDP Port Allocation
 

@@ -52,6 +52,6 @@ supported app list.
 no remote execution, no multi-user. This is a deliberate scope decision for v1 that
 keeps the architecture simple and the privacy story clean.
 
-**No fine-tuned model.** The planner uses Claude Sonnet 4.5 with a system prompt.
+**No fine-tuned model.** The planner uses GPT-4o with a system prompt.
 A fine-tuned model would improve accuracy but requires training data from real task
 executions. Collect trajectory traces during v1, fine-tune for v2.

@@ -40,10 +40,10 @@ Branch: master
 - Discord virtual list: messages not in DOM → scroll-to-bottom + re-observe loop required (see BUILD_ORDER step 5)
 
 ### Planner Loop
-- `stop_reason == "tool_use"` with no matching tool definition → log error, return structured failure
-- `tool_use_id` mismatch in history → Anthropic API returns 400; history format must be validated before each call
+- `finish_reason == "tool_calls"` with no matching tool definition → log error, return structured failure
+- `tool_call_id` mismatch in history → OpenAI API returns 400; history format must be validated before each call
 - max_turns exceeded → return `{"status": "max_turns"}`, do not raise exception (allow caller to retry)
-- Anthropic API rate limit → catch `RateLimitError`, sleep 60s, retry (max 2 retries)
+- OpenAI API rate limit → catch `RateLimitError`, sleep 60s, retry (max 2 retries)
 - Context window exceeded (large SemanticMap) → reduce element cap and retry observation
 
 ### Action Executor
@@ -81,11 +81,11 @@ Branch: master
 
 ### BLOCK 3 — Planner + 3 Tools (Step 3)
 
-- [ ] **T18** Write `cua/planner.py` — `run_task()` with correct Anthropic tool-use history format (see ARCHITECTURE.md)
-- [ ] **T19** Define 3 tool schemas: `focus_window`, `observe_window`, `set_value`
+- [ ] **T18** Write `cua/planner.py` — `run_task()` with correct OpenAI tool-use history format (see ARCHITECTURE.md)
+- [ ] **T19** Define 3 tool schemas in OpenAI function format: `focus_window`, `observe_window`, `set_value`
 - [ ] **T20** Use `ThreadPoolExecutor(max_workers=1)` for all COM/UIA calls; wrap API call in executor too
 - [ ] **T21** Add `max_turns=50`, `timeout=300s` guards
-- [ ] **T22** Add prompt caching: `cache_control: {"type": "ephemeral"}` on system prompt block
+- [ ] **T22** Set `OPENAI_API_KEY` env var; prompt caching is automatic for prompts >1024 tokens
 - [ ] **T23** Write unit tests: tool schema, history format, max_turns guard, timeout guard (test_planner.py)
 - [ ] **T24** Manual test: `python -m cua run "type 'hello' into Chrome address bar"` works
 

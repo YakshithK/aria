@@ -5,7 +5,7 @@ Branch: master
 ## Test Boundary
 
 **In CI (windows-latest):** Pure unit tests. No live COM/CDP/API calls.
-**Manual / smoke:** Live CDP, UIA, Anthropic API calls. Gated per build step.
+**Manual / smoke:** Live CDP, UIA, OpenAI API calls. Gated per build step.
 
 ---
 
@@ -48,11 +48,11 @@ Branch: master
 | Test | Assertion |
 |------|-----------|
 | `test_tool_schema_valid` | All tool definitions serialize to valid JSON schema |
-| `test_history_assistant_format` | Assistant history entry is `{"role": "assistant", "content": List[ContentBlock]}` |
-| `test_history_tool_result_format` | User history entry is `{"role": "user", "content": [{"type": "tool_result", "tool_use_id": ..., "content": str}]}` |
+| `test_history_assistant_format` | Assistant history entry has `role: "assistant"`, `content`, and `tool_calls` fields |
+| `test_history_tool_result_format` | Tool result entry is `{"role": "tool", "tool_call_id": ..., "content": str}` |
 | `test_max_turns_guard` | Loop exits with `{"status": "max_turns"}` after 50 turns (mock API) |
 | `test_timeout_guard` | Loop exits with `{"status": "timeout"}` when monotonic time exceeded (mock time) |
-| `test_end_turn_exits` | Loop exits with `{"status": "complete"}` on `stop_reason == "end_turn"` |
+| `test_end_turn_exits` | Loop exits with `{"status": "complete"}` on `finish_reason == "stop"` |
 
 ---
 
@@ -141,5 +141,5 @@ python-version: "3.11"
 steps:
   - pip install -e ".[dev]"
   - pytest tests/unit/ -v
-# smoke/ tests are NOT in CI — require live apps and Anthropic API key
+# smoke/ tests are NOT in CI — require live apps and OPENAI_API_KEY
 ```
