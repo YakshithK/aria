@@ -106,8 +106,8 @@ python -m cua observe --app vscode
 
 ```
 # smoke_electron.py (not in CI)
-python tests/smoke/smoke_electron.py vscode --launch
-python tests/smoke/smoke_electron.py discord --launch --contains announcements
+python tests/smoke/smoke_electron.py vscode --restart --wait 6 --min-named-elements 3
+python tests/smoke/smoke_electron.py discord --restart --wait 6 --min-named-elements 10
 python tests/smoke/smoke_electron.py discord --restart --wait 6 --scroll-check --min-named-elements 10
 python tests/smoke/smoke_electron.py notion --restart --wait 8 --min-named-elements 3
 ```
