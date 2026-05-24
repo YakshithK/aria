@@ -121,32 +121,57 @@ def force_foreground(hwnd):
 
 Wrap in retry logic — brittle if foreground changes mid-operation.
 
-## Planner Loop (Simplified)
+## Planner Loop
 
 ```python
-async def run_task(task: str):
+async def run_task(task: str, max_turns: int = 50, timeout: float = 300.0) -> dict:
     history = []
-    while not task_complete:
+    start = time.monotonic()
+
+    for turn in range(max_turns):
+        if time.monotonic() - start > timeout:
+            return {"status": "timeout", "turns": turn}
+
         semantic_map = await conductor.get_current_state(scope="focused+registry")
-        response = await client.messages.create(
-            model="claude-sonnet-4-5",
-            tools=[focus_window_tool, observe_tool, set_value_tool, ...],
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": task},
-                *history,
-                {"role": "user", "content": semantic_map.model_dump_json()}
-            ]
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: client.messages.create(
+                model="claude-sonnet-4-5",
+                system=SYSTEM_PROMPT,                   # system is a top-level param, not a message
+                tools=[focus_window_tool, observe_tool, set_value_tool, ...],
+                messages=[
+                    {"role": "user", "content": task},
+                    *history,
+                    {"role": "user", "content": semantic_map.model_dump_json()}
+                ]
+            )
         )
-        for action in extract_tool_calls(response):
-            result = await conductor.execute(action)
-            history.extend([
-                {"role": "assistant", "content": action},
-                {"role": "user", "content": result}
-            ])
+
         if response.stop_reason == "end_turn":
-            break
+            return {"status": "complete", "turns": turn + 1}
+
+        # Correct Anthropic tool-use history format:
+        # Assistant turn: content is the raw response.content list (may include text + tool_use blocks)
+        history.append({"role": "assistant", "content": response.content})
+
+        # User turn: one tool_result block per tool_use block in the assistant message
+        tool_results = []
+        for block in response.content:
+            if block.type == "tool_use":
+                result = await conductor.execute(Action(**block.input))
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": str(result)
+                })
+        if tool_results:
+            history.append({"role": "user", "content": tool_results})
+
+    return {"status": "max_turns", "turns": max_turns}
 ```
+
+**History format invariant**: Every `tool_use` block in an assistant message must have a matching
+`tool_result` in the following user message, keyed by `tool_use_id`. Mismatches cause API errors.
 
 ## Electron App Ports (v1)
 
