@@ -1,0 +1,113 @@
+from typer.testing import CliRunner
+
+from cua.__main__ import app
+from cua.conductor.registry import WindowInfo
+from cua.models import Element, SemanticMap, Window
+
+
+def test_windows_command_prints_registry_table(monkeypatch):
+    monkeypatch.setattr(
+        "cua.__main__.WindowRegistry.snapshot",
+        lambda self: [
+            WindowInfo(
+                hwnd=100,
+                pid=200,
+                process_name="chrome.exe",
+                title="Search",
+                class_name="Chrome_WidgetWin_1",
+                backend="cdp",
+            )
+        ],
+    )
+
+    result = CliRunner().invoke(app, ["windows"])
+
+    assert result.exit_code == 0
+    assert "chrome.exe" in result.stdout
+    assert "Chrome_WidgetWin_1" in result.stdout
+    assert "cdp" in result.stdout
+
+
+def test_windows_command_reports_snapshot_errors(monkeypatch):
+    monkeypatch.setattr(
+        "cua.__main__.WindowRegistry.snapshot",
+        lambda self: (_ for _ in ()).throw(RuntimeError("not available")),
+    )
+
+    result = CliRunner().invoke(app, ["windows"])
+
+    assert result.exit_code == 1
+    assert "not available" in result.stdout
+
+
+def test_observe_command_prints_semantic_map_json(monkeypatch):
+    semantic_map = SemanticMap(
+        timestamp="2026-05-24T20:00:00Z",
+        focused_window="cdp:chrome:page-1",
+        windows=[
+            Window(
+                id="cdp:chrome:page-1",
+                app="Chrome",
+                title="Example",
+                backend="cdp",
+                focused=True,
+                minimized=False,
+                bounds=(0, 0, 0, 0),
+                root_elements=["cdp:page-1:nodeId_1"],
+            )
+        ],
+        elements={
+            "cdp:page-1:nodeId_1": Element(
+                id="cdp:page-1:nodeId_1",
+                role="RootWebArea",
+                name="Example",
+                value=None,
+                bounds=(0, 0, 0, 0),
+                enabled=True,
+                focused=False,
+                actions=[],
+                children=[],
+            )
+        },
+        clipboard=None,
+    )
+
+    class FakeBackend:
+        def __init__(self, port, app):
+            assert port == 9222
+            assert app == "Chrome"
+
+        def observe(self):
+            return semantic_map
+
+    monkeypatch.setattr("cua.__main__.CDPBackend", FakeBackend)
+
+    result = CliRunner().invoke(app, ["observe", "--app", "chrome"])
+
+    assert result.exit_code == 0
+    assert '"focused_window":"cdp:chrome:page-1"' in result.stdout
+    assert '"RootWebArea"' in result.stdout
+
+
+def test_observe_command_rejects_unsupported_app():
+    result = CliRunner().invoke(app, ["observe", "--app", "discord"])
+
+    assert result.exit_code == 1
+    assert "Unsupported observe app" in result.stdout
+
+
+def test_run_command_prints_planner_result(monkeypatch):
+    class FakePlanner:
+        def __init__(self, conductor):
+            self.conductor = conductor
+
+        async def run_task(self, task):
+            assert task == "do it"
+            return {"status": "complete", "turns": 1}
+
+    monkeypatch.setattr("cua.__main__.OllamaPlanner", FakePlanner)
+
+    result = CliRunner().invoke(app, ["run", "do it"])
+
+    assert result.exit_code == 0
+    assert '"status": "complete"' in result.stdout

@@ -1,2 +1,7 @@
 # gstack operational files (local only)
 .claude/gstack/
+
+# Python local artifacts
+__pycache__/
+.pytest_cache/
+.venv/
