@@ -210,8 +210,17 @@ def select_active_target(
         for target in pages:
             if lower_title in str(target.get("title", "")).lower():
                 return target
-    if len(pages) == 1 and window_id is None and title is None:
-        return pages[0]
+    if window_id is None and title is None:
+        usable_pages = [
+            target for target in pages if target.get("webSocketDebuggerUrl")
+        ]
+        named_pages = [
+            target for target in usable_pages if str(target.get("title", "")).strip()
+        ]
+        if named_pages:
+            return named_pages[0]
+        if usable_pages:
+            return usable_pages[0]
     return None
 
 

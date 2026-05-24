@@ -8,9 +8,27 @@ from cua.backends.cdp import CDPBackend
 from cua.launcher import LAUNCH_SPECS, launch_app
 
 
-def element_names(app_name: str) -> list[str]:
+def element_names(
+    app_name: str,
+    *,
+    attempts: int = 5,
+    interval: float = 1.0,
+    sleep=time.sleep,
+) -> list[str]:
     spec = LAUNCH_SPECS[app_name]
-    semantic_map = CDPBackend(port=spec.port, app=spec.app).observe()
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            semantic_map = CDPBackend(port=spec.port, app=spec.app).observe()
+            break
+        except Exception as exc:
+            last_error = exc
+            if attempt < attempts - 1:
+                sleep(interval)
+    else:
+        assert last_error is not None
+        raise last_error
+
     return [
         element.name
         for element in semantic_map.elements.values()

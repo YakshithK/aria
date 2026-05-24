@@ -157,6 +157,21 @@ def test_active_tab_no_match_returns_none():
     assert select_active_target(targets, window_id=2, title="missing") is None
 
 
+def test_active_target_without_hints_prefers_first_usable_page():
+    targets = [
+        {"id": "browser", "type": "browser", "title": "Browser"},
+        {"id": "blank", "type": "page", "title": "", "webSocketDebuggerUrl": "ws://blank"},
+        {
+            "id": "notion",
+            "type": "page",
+            "title": "Notion",
+            "webSocketDebuggerUrl": "ws://notion",
+        },
+    ]
+
+    assert select_active_target(targets, window_id=None, title=None)["id"] == "notion"
+
+
 def test_port_collision_guard():
     registry = PortRegistry()
     registry.register("chrome", 9222)

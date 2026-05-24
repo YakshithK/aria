@@ -69,6 +69,14 @@ def resolve_command(commands: list[list[str]]) -> list[str]:
     return commands[0]
 
 
+def resolve_launch_cwd() -> str | None:
+    for env_name in ("USERPROFILE", "TEMP"):
+        value = os.environ.get(env_name)
+        if value and Path(value).exists():
+            return value
+    return None
+
+
 def launch_app(app_name: str) -> dict[str, Any]:
     normalized_app = app_name.lower()
     spec = LAUNCH_SPECS.get(normalized_app)
@@ -76,7 +84,12 @@ def launch_app(app_name: str) -> dict[str, Any]:
         raise UnsupportedAppError(f"Unsupported launch app: {app_name}")
 
     command = resolve_command(spec.commands)
-    process = subprocess.Popen(command)
+    process = subprocess.Popen(
+        command,
+        cwd=resolve_launch_cwd(),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     return {
         "ok": True,
         "app": spec.app,
