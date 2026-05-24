@@ -67,6 +67,35 @@ def test_resolve_command_returns_resolved_path_from_path_lookup(monkeypatch):
     ]
 
 
+def test_resolve_command_skips_extensionless_windows_path_shims(monkeypatch):
+    def fake_which(executable):
+        if executable == "code":
+            return "C:/Users/example/AppData/Local/Programs/Microsoft VS Code/bin/code"
+        return None
+
+    monkeypatch.setattr("cua.launcher.os.name", "nt")
+    monkeypatch.setattr("cua.launcher.shutil.which", fake_which)
+    monkeypatch.setattr(
+        "cua.launcher.Path.exists",
+        lambda path: str(path).endswith("Code.exe"),
+    )
+
+    command = resolve_command(
+        [
+            ["code", "--remote-debugging-port=9223"],
+            [
+                "%LOCALAPPDATA%/Programs/Microsoft VS Code/Code.exe",
+                "--remote-debugging-port=9223",
+            ],
+        ]
+    )
+
+    assert command == [
+        "%LOCALAPPDATA%/Programs/Microsoft VS Code/Code.exe",
+        "--remote-debugging-port=9223",
+    ]
+
+
 def test_launch_app_starts_configured_app(monkeypatch):
     calls = []
 

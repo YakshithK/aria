@@ -69,11 +69,18 @@ def resolve_command(commands: list[list[str]]) -> list[str]:
     for command in commands:
         executable = os.path.expandvars(command[0])
         resolved_path = shutil.which(executable)
-        if resolved_path:
+        if resolved_path and _is_directly_launchable(resolved_path):
             return [resolved_path, *command[1:]]
         if Path(executable).exists():
             return [executable, *command[1:]]
     return commands[0]
+
+
+def _is_directly_launchable(path: str) -> bool:
+    suffix = Path(path).suffix.lower()
+    if suffix:
+        return suffix in {".bat", ".cmd", ".com", ".exe"}
+    return os.name != "nt"
 
 
 def resolve_launch_cwd() -> str | None:
