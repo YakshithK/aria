@@ -10,7 +10,7 @@ Internal docs for the CUA project. Start here.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Stack, schemas, CDP flow, planner loop, window classification, port table |
 | [BUILD.md](BUILD.md) | 7-step build order with testable artifacts and what-not-to-build per step |
 | [TASKS.md](TASKS.md) | 43 implementation tasks across 8 blocks, with deps and parallelization notes |
-| [TEST_PLAN.md](TEST_PLAN.md) | Unit test table (25 tests) + smoke test scripts per build step |
+| [TEST_PLAN.md](TEST_PLAN.md) | Unit test table + smoke test scripts per build step |
 | [DEMO.md](DEMO.md) | Launch demo spec, benchmark table template, pre-demo checklist |
 | [LIMITATIONS.md](LIMITATIONS.md) | Hard limits (won't fix v1) and aspirational limits (may improve) |
 

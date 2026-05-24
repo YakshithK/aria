@@ -6,6 +6,7 @@ Branch: master
 
 **In CI (windows-latest):** Pure unit tests. No live COM/CDP/API calls.
 **Manual / smoke:** Live CDP, UIA, Ollama inference calls. Gated per build step.
+Current local unit count: 78 passing as of 2026-05-24.
 
 ---
 
@@ -17,7 +18,7 @@ Branch: master
 |------|-----------|
 | `test_element_id_prefix` | `Element(id="uia:42")` and `Element(id="cdp:tab1:88")` both validate |
 | `test_semantic_map_round_trip` | `SemanticMap.model_dump_json()` → `SemanticMap.model_validate_json()` is lossless |
-| `test_action_type_literals` | All 7 type literals validate; invalid literal raises `ValidationError` |
+| `test_action_type_literals` | All 9 type literals validate; invalid literal raises `ValidationError` |
 | `test_window_backend_literals` | `"uia"`, `"cdp"`, `"unsupported"` validate; `"vision"` raises `ValidationError` |
 
 ### backends/cdp.py
@@ -32,6 +33,9 @@ Branch: master
 | `test_active_tab_fallback_title` | Falls back to title match when `windowId` absent |
 | `test_active_tab_no_match` | Returns `None` (not first result) when nothing matches |
 | `test_port_collision_guard` | Two registrations for same port raise `PortConflictError` |
+| `test_http_client_retries_until_ax_tree_has_useful_nodes` | Sparse first AX read is retried before returning root-only data |
+| `test_backend_observe_falls_back_to_dom_interactives_when_ax_tree_is_sparse` | Root-only AX tree falls back to visible DOM interactives |
+| `test_backend_set_value_supports_dom_fallback_inputs` | DOM fallback inputs can be targeted by `set_value` |
 
 ### conductor/registry.py
 
@@ -53,6 +57,7 @@ Branch: master
 | `test_max_turns_guard` | Loop exits with `{"status": "max_turns"}` after 50 turns (mock API) |
 | `test_timeout_guard` | Loop exits with `{"status": "timeout"}` when monotonic time exceeded (mock time) |
 | `test_end_turn_exits` | Loop exits with `{"status": "complete"}` on `finish_reason == "stop"` |
+| `test_repeated_observe_without_new_information_stops_with_diagnostic` | Repeated identical observations return `{"status": "stalled"}` |
 
 ---
 
@@ -72,13 +77,14 @@ python -m cua observe --app chrome
 - SemanticMap JSON printed to stdout
 - Element count ≤ 500, max depth ≤ 8
 - Each element has id, role, name, actions fields populated
+- Sparse AX pages still expose visible DOM links/buttons/inputs as `dom_` elements
 
-### Step 3: Planner (2 tools)
+### Step 3: Planner (Ollama tools)
 ```
-python -m cua run "type 'hello' into the Chrome address bar and press Enter"
+python -m cua run "navigate Chrome to https://www.google.com/search?q=hello"
 ```
-- Agent calls `focus_window` then `set_value` in correct order
-- Address bar receives text
+- Agent calls `navigate` for browser URL/search tasks
+- Page navigates without depending on browser chrome keyboard shortcuts
 - Task completes without loop runaway
 
 ### Step 4: Full action executor
@@ -86,6 +92,8 @@ python -m cua run "type 'hello' into the Chrome address bar and press Enter"
 python -m cua run "click the first search result on the current Chrome page"
 ```
 - `invoke` action fires on correct element
+- DOM fallback `invoke` works for sparse AX search result pages
+- DOM fallback `set_value` works for sparse AX search/input pages
 - Page navigates (visible behavior)
 
 ### Step 5: Electron support
@@ -101,7 +109,8 @@ python -m cua observe --app vscode
 python cua/tests/smoke_electron.py
 ```
 - Discord launches with debug port
-- AX tree has message content, channel names, server names as accessible nodes
+- Semantic map has message content, channel names, server names as accessible nodes
+  or DOM fallback nodes
 - Virtual list scroll loop: scroll to bottom, observe, scroll up, observe — all 10+ messages visible
 
 ### Step 6: Launch demo
@@ -139,7 +148,7 @@ cua/
 runs-on: windows-latest
 python-version: "3.11"
 steps:
-  - pip install -e ".[dev]"
-  - pytest tests/unit/ -v
+  - python -m pip install -e ".[dev]"
+  - python -m pytest tests/unit/ -v
 # smoke/ tests are NOT in CI — require live apps and Ollama running locally
 ```

@@ -9,10 +9,10 @@
 │  - Function calling for action emission                  │
 │  - Structured JSON input from conductor                  │
 └──────────────────────────────────────────────────────────┘
-                          ↕ local HTTP (FastAPI)
+                          ↕ in-process CLI call
 ┌──────────────────────────────────────────────────────────┐
-│  Conductor Daemon (Python)                               │
-│  - Window registry (global UIA events)                   │
+│  Local Conductor (Python)                                │
+│  - Window registry snapshot                              │
 │  - Observation router (CDP primary / UIA secondary)      │
 │  - Action executor                                       │
 │  - Semantic map cache                                    │
@@ -23,7 +23,7 @@
         ↓                        ↓               SetForeground)
    IUIAutomation       chrome localhost
    (COM)               :9222 + per-port
-                       Electron debug
+                       Electron debug + DOM fallback
 ```
 
 ## Stack
@@ -39,8 +39,10 @@ CDP WebSocket + JSON is 10 lines in Python, not 200. Rapid prompt iteration (edi
 not recompile). Migrate to Rust when the GIL becomes the measured bottleneck at >100
 UIA nodes/second.
 
-**Why FastAPI for conductor:** Async from the start — CDP WebSocket and UIA events are both
-async. Pydantic integration for SemanticMap validation. Local-only; no production concerns.
+**Current conductor shape:** In-process CLI conductor (`LocalConductor`) for v1 iteration.
+It uses worker threads around backend calls and returns structured action results. A
+FastAPI daemon can be added later if another process needs to drive the same conductor,
+but the current working path is `python -m cua ...` without a server.
 
 ```
 uiautomation==2.0.20   # UIA COM wrapper (wraps IUIAutomation cleanly)
@@ -50,8 +52,8 @@ psutil==6.0.0          # Process enumeration for CDP target discovery
 websockets==13.0       # CDP WebSocket transport
 httpx==0.27.0          # CDP /json/list HTTP endpoint
 openai==1.51.0         # OpenAI-compatible client (pointed at Ollama)
-fastapi==0.115.0       # Local conductor HTTP API
-uvicorn==0.30.0        # ASGI server for conductor
+fastapi==0.115.0       # Reserved for a future local conductor HTTP API
+uvicorn==0.30.0        # Reserved for a future ASGI conductor
 pydantic==2.9.0        # Semantic map schema validation
 typer==0.12.5          # CLI entry points
 rich==13.8.0           # Terminal output for demos
@@ -94,7 +96,7 @@ class SemanticMap(BaseModel):
 ```python
 class Action(BaseModel):
     type: Literal["focus_window", "observe_window", "invoke", "set_value",
-                  "type", "scroll", "wait_for", "key_combo"]
+                  "type", "navigate", "scroll", "wait_for", "key_combo"]
     target_id: Optional[str]
     payload: Optional[dict]
 ```
@@ -103,10 +105,27 @@ class Action(BaseModel):
 
 1. `GET http://localhost:<PORT>/json/list` → debuggable targets
 2. Pick active tab → get WebSocket URL
-3. Open WebSocket → `Accessibility.enable` + `Accessibility.getFullAXTree`
+3. Open a short-lived WebSocket → `Accessibility.enable` + `Accessibility.getFullAXTree`
 4. Parse AX tree → normalized Element schema
-5. Subscribe to `DOM.documentUpdated`, `Accessibility.loadComplete` for events
-6. Actions: `Runtime.callFunctionOn` (invoke/click), `Input.insertText` (set_value)
+5. If AX is sparse (only `RootWebArea`), extract semantic DOM interactives:
+   `a[href]`, `button`, `input`, `textarea`, `select`, `[role=button]`, `[role=link]`
+6. Re-observe on demand; event subscriptions are a later optimization
+7. Actions: `Runtime.callFunctionOn` (invoke/click/set_value), DOM fallback
+   `Runtime.evaluate` (invoke/set_value on DOM interactives), `Input.insertText` (type),
+   `Input.dispatchMouseEvent` (scroll), `Input.dispatchKeyEvent` (key_combo),
+   `Page.navigate` (navigate)
+
+## DOM Fallback
+
+CDP Accessibility can return a sparse tree for some pages (observed on Google Search:
+title available, but only `RootWebArea` in the AX tree). When filtered AX has no
+actionable descendants, the backend extracts visible DOM interactives and normalizes
+them into the same `Element` schema.
+
+DOM fallback element ids use `cdp:<target_id>:dom_<index>`. Each element caches a
+short target record: selector, role, name, and value. Actions first try the selector,
+then fall back to matching the current DOM by role/name/value so dynamic pages can
+mutate selectors between observe and invoke.
 
 ## Window Registry Classification
 
@@ -140,6 +159,8 @@ Wrap in retry logic — brittle if foreground changes mid-operation.
 ```python
 async def run_task(task: str, max_turns: int = 50, timeout: float = 300.0) -> dict:
     history = []
+    tool_trace = []
+    repeated_observe_count = 0
     start = time.monotonic()
 
     for turn in range(max_turns):
@@ -164,7 +185,7 @@ async def run_task(task: str, max_turns: int = 50, timeout: float = 300.0) -> di
         choice = response.choices[0]
 
         if choice.finish_reason == "stop":
-            return {"status": "complete", "turns": turn + 1}
+            return {"status": "complete", "turns": turn + 1, "tool_trace": tool_trace}
 
         # OpenAI-compatible tool-use history format (Ollama follows this spec):
         # Assistant turn: include content + tool_calls from the response message
@@ -179,6 +200,9 @@ async def run_task(task: str, max_turns: int = 50, timeout: float = 300.0) -> di
             result = await conductor.execute(
                 Action(**json.loads(tool_call.function.arguments))
             )
+            tool_trace.append({"name": tool_call.function.name, "result": str(result)})
+            # If the model repeatedly observes and receives identical semantic maps,
+            # return a structured stalled result instead of burning all 50 turns.
             history.append({
                 "role": "tool",
                 "tool_call_id": tool_call.id,

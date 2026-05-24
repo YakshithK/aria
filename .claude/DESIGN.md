@@ -26,7 +26,7 @@ themselves. This is the HN/Twitter audience that amplifies.
 ## The Demo (Narrowest Wedge)
 
 Read last 10 messages from #announcements in 3 Discord servers (Electron/CDP). Summarize
-with Claude. Paste into a Notion page (Electron/CDP). Total: ~30 seconds. Operator on the
+with the local Ollama planner. Paste into a Notion page (Electron/CDP). Total: ~30 seconds. Operator on the
 same task: 4-7 minutes. The demo IS the wedge. Everything else is v2.
 
 ## Approach Selected: CDP-First, UIA Secondary
@@ -74,8 +74,8 @@ Alternatives considered:
 
 1. Window registry (EnumWindows + UIA window events — tracking only, not content reading)
 2. CDP backend for Chrome (content observation + action execution)
-3. Claude as planner with 3 tools: focus_window, observe_window, set_value
-4. Add invoke, scroll, key_combo actions; test Chrome workflows
+3. Ollama planner with `focus_window`, `observe_window`, `set_value`, `navigate`
+4. Add `invoke`, `type`, `scroll`, `wait_for`, `key_combo`; test Chrome workflows
 5. Electron support (VS Code first, then Discord/Notion)
 6. **LAUNCH:** Discord/Notion demo — record split-screen vs Operator, post
 7. UIA backend for simple Win32 (Notepad, File Explorer) — post-launch
@@ -115,9 +115,10 @@ See `BUILD.md` for testable artifacts and what-not-to-build per step.
 ## The Assignment (Before Writing Code)
 
 Launch Discord with `--remote-debugging-port=9224`. Open Chrome DevTools at
-`localhost:9224`. Navigate to the Accessibility tab. Read the AX tree for one Discord
-channel and verify you can see message content, channel names, and server names.
-This 15-minute test either confirms or breaks the entire demo premise.
+`localhost:9224`. Navigate to the Accessibility tab and inspect one Discord channel.
+If the AX tree is sparse, verify the DOM fallback can still expose links, controls,
+message text, channel names, and server names. This 15-minute test either confirms
+or breaks the entire demo premise.
 
 ## Engineering Review Decisions
 
@@ -129,3 +130,5 @@ This 15-minute test either confirms or breaks the entire demo premise.
 | D4 | Planning loop with no bounds | max_turns=50, timeout=300s, structured failure return |
 | D5 | pywin32/uiautomation are Windows-only | CI on windows-latest, unit tests only |
 | D6 | Planner history format: OpenAI-compatible (used by Ollama) | Corrected format documented in ARCHITECTURE.md |
+| D7 | Chrome can expose only `RootWebArea` for rich pages | Add semantic DOM fallback for links/buttons/inputs; still no screenshots |
+| D8 | Planner can loop on repeated observe calls | Return `status="stalled"` after repeated identical observations |

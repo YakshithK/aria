@@ -32,14 +32,16 @@ of the active Chrome tab as JSON.
 
 **What to build:**
 - `GET http://localhost:9222/json/list` to get debuggable targets
-- WebSocket connection to active tab
+- Short-lived WebSocket connection to active tab
 - `Accessibility.enable` + `Accessibility.getFullAXTree` → raw AX tree
 - Normalize AX nodes to `Element` schema (id, role, name, value, bounds, actions, children)
+- Semantic DOM fallback when AX is sparse: extract visible links/buttons/inputs as Elements
 - `Window` record with `backend="cdp"`
 - SemanticMap assembly
 
 **Proof it works:** Open a Google search results page. Run the command. See search
-result links, input field, buttons as named elements with roles.
+result links, input field, buttons as named elements with roles. If Chrome returns
+only `RootWebArea` via AX, DOM fallback should still expose `dom_` elements.
 
 **Does NOT include:** Event subscriptions, Electron support, planner.
 
@@ -47,18 +49,18 @@ result links, input field, buttons as named elements with roles.
 
 ## Step 3: LLM Planner (3 Tools)
 
-**Artifact:** `python -m cua run "type 'hello' into the Chrome address bar"` completes
+**Artifact:** `python -m cua run "navigate Chrome to https://www.google.com/search?q=hello"` completes
 the task using gemma4:31b-cloud via Ollama as the planner.
 
 **What to build:**
-- FastAPI conductor server on localhost
+- In-process `LocalConductor` for the CLI path
 - Planning loop (see ARCHITECTURE.md)
-- Tool definitions: `focus_window`, `observe_window`, `set_value` (CDP Input.insertText)
+- Tool definitions: `focus_window`, `observe_window`, `set_value`, `navigate`
 - System prompt: schema description, action semantics, "no pixels" constraint
-- Token + latency logging to stdout
+- Structured `tool_trace` in CLI output for action debugging
 
-**Proof it works:** Run the task. The address bar gets "hello" typed into it. Logs show
-token count and wall-clock time.
+**Proof it works:** Run the task. Chrome navigates to the requested URL/search page.
+Logs show token count and wall-clock time.
 
 **Does NOT include:** invoke, scroll, key_combo, UIA actions.
 
@@ -70,10 +72,13 @@ token count and wall-clock time.
 
 **What to build:**
 - `invoke` action: `Runtime.callFunctionOn` with `.click()` on CDP nodeId
+- DOM fallback `invoke` action: selector first, then role/name/value matching
+- DOM fallback `set_value` action: set visible input/textarea/select values
 - `scroll` action: `Input.dispatchMouseEvent` scroll event
 - `key_combo` action: `Input.dispatchKeyEvent` with virtual key codes
 - `wait_for` action: poll SemanticMap until element appears or timeout
-- `type` action: `SendInput` fallback when no CDP set_value path
+- `type` action: `Input.insertText` into the active focused page field
+- Planner stall guard: return `status="stalled"` on repeated identical observations
 
 **Proof it works:** Run a multi-step Chrome workflow: open a URL, click a link,
 scroll the page, hit Escape. All actions complete without pixel simulation.
@@ -88,9 +93,9 @@ scroll the page, hit Escape. All actions complete without pixel simulation.
 **What to build:**
 - Launcher command: wraps common apps with `--remote-debugging-port=<port>`
 - Port registry: each Electron app gets a stable port (see ARCHITECTURE.md table)
-- VS Code CDP AX tree normalization (test: can you see the file explorer tree?)
-- Discord CDP AX tree normalization (test: can you see channel names and messages?)
-- Notion CDP AX tree normalization (test: can you see page blocks?)
+- VS Code CDP semantic normalization (AX first, DOM fallback if sparse)
+- Discord CDP semantic normalization (test: can you see channel names and messages?)
+- Notion CDP semantic normalization (test: can you see page blocks?)
 
 **Proof it works (VS Code):** `cua run "open the terminal in VS Code"` works.
 **Proof it works (Discord):** `cua observe --app discord` shows server names, channel
@@ -98,7 +103,8 @@ names, and last 5 messages in the active channel.
 
 **Risk checkpoint:** If Discord rejects --remote-debugging-port on the current build,
 test with Slack or a plain Electron app before committing to it as the demo target.
-If Notion's accessibility tree is sparse, pivot the demo target to a Google Doc.
+If Notion's semantic map is sparse even after DOM fallback, pivot the demo target
+to a Google Doc.
 
 ---
 

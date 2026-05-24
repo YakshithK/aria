@@ -56,8 +56,8 @@ Measure actual numbers during demo prep. Publish the exact numbers, not estimate
 ## Pre-Demo Checklist
 
 - [ ] Discord launches with debug port on test machine
-- [ ] Notion CDP accessibility tree is rich enough (test: can you see page content?)
-- [ ] Discord channel messages visible in CDP AX tree
+- [ ] Notion CDP semantic map is rich enough (AX or DOM fallback; test: can you see page content?)
+- [ ] Discord channel messages visible in CDP semantic map (AX or DOM fallback)
 - [ ] gemma4:31b-cloud (Ollama) can navigate from channel list to messages in one task
 - [ ] Token count per full demo run measured and noted
 - [ ] Operator version of the demo recorded on same hardware

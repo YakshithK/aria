@@ -39,6 +39,11 @@ may block it entirely. Per-app adapters are shipped as we discover quirks.
 are re-discovered every run. This is by design (UIA's own model) but means there are
 no persistent element references between tasks.
 
+**DOM fallback is semantic, but web-specific.** Some Chromium pages expose only a sparse
+AX tree. CUA can fall back to visible DOM interactives (links, buttons, inputs, textareas,
+selects) and still avoid screenshots. This does not help canvas/WebGL/custom-rendered
+content, and fallback element references are only valid for the current page state.
+
 ## Aspirational (May Improve in v1 If Feasible)
 
 **Office UIA coverage.** Office apps (Word, Excel, Outlook) expose UIA but the
