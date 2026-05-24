@@ -1,7 +1,11 @@
 import asyncio
+import sys
+import types
 from unittest.mock import patch
 
-from cua.conductor.local import LocalConductor
+import pytest
+
+from cua.conductor.local import ForegroundError, LocalConductor, Win32ForegroundController
 from cua.models import Action
 
 
@@ -26,6 +30,78 @@ def test_local_conductor_routes_set_value_to_cdp_backend():
 
     assert result == {"ok": True}
     assert backend.call == ("cdp:page-1:nodeId_2", "hello")
+
+
+def test_local_conductor_routes_focus_window_to_foreground_controller():
+    class FakeForeground:
+        def force_foreground(self, hwnd):
+            self.call = hwnd
+            return {"ok": True, "hwnd": hwnd}
+
+    foreground = FakeForeground()
+    conductor = LocalConductor(cdp_backend=object(), foreground_controller=foreground)
+
+    result = asyncio.run(
+        conductor.execute(Action(type="focus_window", target_id="win:0x4A21"))
+    )
+
+    assert result == {"ok": True, "hwnd": 0x4A21}
+    assert foreground.call == 0x4A21
+
+
+def test_local_conductor_rejects_focus_window_without_hwnd_target():
+    conductor = LocalConductor(cdp_backend=object(), foreground_controller=object())
+
+    result = asyncio.run(
+        conductor.execute(Action(type="focus_window", target_id="cdp:chrome:page-1"))
+    )
+
+    assert result == {
+        "ok": False,
+        "error": "focus_window requires target_id like win:0x1234 or a numeric hwnd",
+    }
+
+
+def test_win32_foreground_controller_retries_thread_attach(monkeypatch):
+    calls = []
+    foreground_windows = iter([100, 100, 200])
+
+    win32gui = types.SimpleNamespace(
+        GetForegroundWindow=lambda: next(foreground_windows),
+        BringWindowToTop=lambda hwnd: calls.append(("bring", hwnd)),
+        SetForegroundWindow=lambda hwnd: calls.append(("set", hwnd)),
+    )
+    win32process = types.SimpleNamespace(
+        GetWindowThreadProcessId=lambda hwnd: (hwnd + 1000, 0),
+        AttachThreadInput=lambda source, target, attach: calls.append(
+            ("attach", source, target, attach)
+        ),
+    )
+    win32api = types.SimpleNamespace(GetCurrentThreadId=lambda: 5000)
+
+    monkeypatch.setattr("cua.conductor.local.sys.platform", "win32")
+    monkeypatch.setitem(sys.modules, "win32gui", win32gui)
+    monkeypatch.setitem(sys.modules, "win32process", win32process)
+    monkeypatch.setitem(sys.modules, "win32api", win32api)
+
+    result = Win32ForegroundController(sleep=lambda _: calls.append(("sleep",))).force_foreground(
+        200
+    )
+
+    assert result == {"ok": True, "hwnd": 200, "attempts": 1}
+    assert ("attach", 1100, 5000, True) in calls
+    assert ("attach", 1200, 5000, True) in calls
+    assert ("bring", 200) in calls
+    assert ("set", 200) in calls
+    assert ("attach", 1200, 5000, False) in calls
+    assert ("attach", 1100, 5000, False) in calls
+
+
+def test_win32_foreground_controller_rejects_non_windows(monkeypatch):
+    monkeypatch.setattr("cua.conductor.local.sys.platform", "linux")
+
+    with pytest.raises(ForegroundError, match="native Windows Python"):
+        Win32ForegroundController().force_foreground(200)
 
 
 def test_local_conductor_rejects_set_value_without_text_payload():

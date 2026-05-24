@@ -96,7 +96,7 @@ Branch: master
 
 - [x] **T25** Add remaining tool schemas: `invoke`, `type`, `scroll`, `key_combo`, `wait_for`
 - [x] **T26** Write action executor dispatch: Action.type → CDP method
-- [ ] **T27** Write `force_foreground` with retry (see ARCHITECTURE.md)
+- [x] **T27** Write `force_foreground` with retry (see ARCHITECTURE.md)
 - [x] **T28** Manual test: `python -m cua run "click first search result"` works
 - [x] **T28a** DOM fallback `invoke` and `set_value` work on sparse Google pages
 

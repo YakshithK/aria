@@ -6,7 +6,7 @@ Branch: master
 
 **In CI (windows-latest):** Pure unit tests. No live COM/CDP/API calls.
 **Manual / smoke:** Live CDP, UIA, Ollama inference calls. Gated per build step.
-Current local unit count: 78 passing as of 2026-05-24.
+Current local unit count: 82 passing as of 2026-05-24.
 
 ---
 
