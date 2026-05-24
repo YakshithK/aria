@@ -51,6 +51,22 @@ def test_resolve_command_uses_first_available_candidate(monkeypatch):
     assert command == ["%LOCALAPPDATA%/Programs/Microsoft VS Code/Code.exe", "--flag"]
 
 
+def test_resolve_command_returns_resolved_path_from_path_lookup(monkeypatch):
+    monkeypatch.setattr(
+        "cua.launcher.shutil.which",
+        lambda executable: "C:/Users/example/AppData/Local/Programs/Microsoft VS Code/bin/code.cmd"
+        if executable == "code"
+        else None,
+    )
+
+    command = resolve_command([["code", "--remote-debugging-port=9223"]])
+
+    assert command == [
+        "C:/Users/example/AppData/Local/Programs/Microsoft VS Code/bin/code.cmd",
+        "--remote-debugging-port=9223",
+    ]
+
+
 def test_launch_app_starts_configured_app(monkeypatch):
     calls = []
 

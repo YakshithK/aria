@@ -75,7 +75,11 @@ def run_smoke(
             failures.append(f"{app_name}: unsupported app")
             continue
         if launch:
-            launch_app(app_name, restart=restart)
+            try:
+                launch_app(app_name, restart=restart)
+            except Exception as exc:
+                failures.append(f"{app_name}: launch failed: {exc}")
+                continue
             time.sleep(wait_seconds)
         try:
             names = (

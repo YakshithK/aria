@@ -68,7 +68,10 @@ LAUNCH_SPECS = {
 def resolve_command(commands: list[list[str]]) -> list[str]:
     for command in commands:
         executable = os.path.expandvars(command[0])
-        if shutil.which(executable) or Path(executable).exists():
+        resolved_path = shutil.which(executable)
+        if resolved_path:
+            return [resolved_path, *command[1:]]
+        if Path(executable).exists():
             return [executable, *command[1:]]
     return commands[0]
 

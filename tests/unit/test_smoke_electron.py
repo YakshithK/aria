@@ -64,6 +64,28 @@ def test_run_smoke_restarts_app_before_launch(monkeypatch):
     assert calls == [("launch", "discord", True)]
 
 
+def test_run_smoke_reports_launch_failures(monkeypatch):
+    monkeypatch.setattr(
+        smoke_electron,
+        "launch_app",
+        lambda app_name, restart=False: (_ for _ in ()).throw(
+            FileNotFoundError("missing")
+        ),
+    )
+
+    result = smoke_electron.run_smoke(
+        ["vscode"],
+        launch=True,
+        restart=True,
+        wait_seconds=0,
+        contains=None,
+        min_named_elements=1,
+        scroll_check=False,
+    )
+
+    assert result == 1
+
+
 def test_scrolled_element_names_observes_after_each_scroll(monkeypatch):
     calls = []
 
