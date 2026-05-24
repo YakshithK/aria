@@ -52,9 +52,18 @@ Target: ~30 seconds. Operator on same task: 4-7 minutes.
 
 ## Open Questions Before Writing Code
 
-1. Verify Notion CDP accessibility tree is rich enough (custom renderer risk)
-2. Verify Discord debug port works on current desktop version
-3. Measure token cost per task on the demo workflow
+1. Verify Notion CDP accessibility tree is rich enough (custom renderer risk).
+   Fallback: Google Docs in Chrome (same CDP path, simpler AX tree).
+2. Verify Discord debug port works on current desktop version.
+   Fallback: VS Code CDP or browser-based Discord via Chrome.
+3. Verify Discord virtual message list: Discord shows only visible messages in the
+   DOM. A scroll + re-observe loop is required to read off-screen messages. Test
+   this explicitly in step 5 before recording the demo.
+4. observe_window output contract: returns SemanticMap JSON — flat dict of Elements
+   by id plus Window record. Planner sees focused window + registry. Element schema:
+   id, role, name, value, bounds, enabled, focused, actions, children.
+5. Measure token cost on demo workflow. Reference: Operator spends 1500-3000 image
+   tokens per screenshot; this agent spends 0. That delta is the cost story.
 
 ## The Assignment (Do This Before Coding)
 
