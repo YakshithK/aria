@@ -89,11 +89,67 @@ def test_observe_command_prints_semantic_map_json(monkeypatch):
     assert '"RootWebArea"' in result.stdout
 
 
+def test_observe_command_supports_vscode_port(monkeypatch):
+    semantic_map = SemanticMap(
+        timestamp="2026-05-24T20:00:00Z",
+        focused_window="cdp:vscode:page-1",
+        windows=[
+            Window(
+                id="cdp:vscode:page-1",
+                app="VS Code",
+                title="Explorer",
+                backend="cdp",
+                focused=True,
+                minimized=False,
+                bounds=(0, 0, 0, 0),
+                root_elements=[],
+            )
+        ],
+        elements={},
+        clipboard=None,
+    )
+
+    class FakeBackend:
+        def __init__(self, port, app):
+            assert port == 9223
+            assert app == "VS Code"
+
+        def observe(self):
+            return semantic_map
+
+    monkeypatch.setattr("cua.__main__.CDPBackend", FakeBackend)
+
+    result = CliRunner().invoke(app, ["observe", "--app", "vscode"])
+
+    assert result.exit_code == 0
+    assert '"focused_window":"cdp:vscode:page-1"' in result.stdout
+    assert "VS" in result.stdout
+    assert "Code" in result.stdout
+
+
 def test_observe_command_rejects_unsupported_app():
     result = CliRunner().invoke(app, ["observe", "--app", "discord"])
 
     assert result.exit_code == 1
     assert "Unsupported observe app" in result.stdout
+
+
+def test_launch_command_starts_supported_app(monkeypatch):
+    monkeypatch.setattr(
+        "cua.__main__.launch_app",
+        lambda app_name: {
+            "ok": True,
+            "app": "VS Code",
+            "port": 9223,
+            "pid": 1234,
+        },
+    )
+
+    result = CliRunner().invoke(app, ["launch", "vscode"])
+
+    assert result.exit_code == 0
+    assert '"app": "VS Code"' in result.stdout
+    assert '"port": 9223' in result.stdout
 
 
 def test_run_command_prints_planner_result(monkeypatch):

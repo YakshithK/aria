@@ -7,12 +7,13 @@ import typer
 from cua.backends.cdp import CDPBackend
 from cua.conductor.local import LocalConductor
 from cua.conductor.registry import WindowRegistry
+from cua.launcher import LAUNCH_SPECS, launch_app
 from cua.planner import OllamaPlanner
 
 app = typer.Typer(help="CUA Windows semantic computer-use agent.")
 console = Console()
-CDP_PORTS = {"chrome": 9222}
-APP_NAMES = {"chrome": "Chrome"}
+CDP_PORTS = {"chrome": 9222, **{name: spec.port for name, spec in LAUNCH_SPECS.items()}}
+APP_NAMES = {"chrome": "Chrome", **{name: spec.app for name, spec in LAUNCH_SPECS.items()}}
 
 
 @app.callback()
@@ -66,6 +67,17 @@ def observe(app_name: str = typer.Option(..., "--app")) -> None:
         raise typer.Exit(1) from exc
 
     console.print(semantic_map.model_dump_json())
+
+
+@app.command()
+def launch(app_name: str) -> None:
+    """Launch a supported app with its CDP debug port enabled."""
+    try:
+        result = launch_app(app_name)
+    except Exception as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    console.print_json(data=result)
 
 
 @app.command()
