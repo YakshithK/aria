@@ -8,6 +8,15 @@ from cua.backends.cdp import CDPBackend
 from cua.launcher import LAUNCH_SPECS, launch_app
 
 
+def named_elements_from_backend(backend: CDPBackend) -> list[str]:
+    semantic_map = backend.observe()
+    return [
+        element.name
+        for element in semantic_map.elements.values()
+        if element.name and element.role != "RootWebArea"
+    ]
+
+
 def element_names(
     app_name: str,
     *,
@@ -19,7 +28,7 @@ def element_names(
     last_error: Exception | None = None
     for attempt in range(attempts):
         try:
-            semantic_map = CDPBackend(port=spec.port, app=spec.app).observe()
+            names = named_elements_from_backend(CDPBackend(port=spec.port, app=spec.app))
             break
         except Exception as exc:
             last_error = exc
@@ -29,11 +38,25 @@ def element_names(
         assert last_error is not None
         raise last_error
 
-    return [
-        element.name
-        for element in semantic_map.elements.values()
-        if element.name and element.role != "RootWebArea"
-    ]
+    return names
+
+
+def scrolled_element_names(
+    app_name: str,
+    *,
+    interval: float = 1.0,
+    sleep=time.sleep,
+) -> list[str]:
+    spec = LAUNCH_SPECS[app_name]
+    backend = CDPBackend(port=spec.port, app=spec.app)
+    names = set(named_elements_from_backend(backend))
+    backend.scroll(delta_y=800)
+    sleep(interval)
+    names.update(named_elements_from_backend(backend))
+    backend.scroll(delta_y=-800)
+    sleep(interval)
+    names.update(named_elements_from_backend(backend))
+    return sorted(names)
 
 
 def run_smoke(
@@ -44,6 +67,7 @@ def run_smoke(
     wait_seconds: float,
     contains: str | None,
     min_named_elements: int,
+    scroll_check: bool,
 ) -> int:
     failures = []
     for app_name in app_names:
@@ -54,7 +78,11 @@ def run_smoke(
             launch_app(app_name, restart=restart)
             time.sleep(wait_seconds)
         try:
-            names = element_names(app_name)
+            names = (
+                scrolled_element_names(app_name)
+                if scroll_check
+                else element_names(app_name)
+            )
         except Exception as exc:
             failures.append(f"{app_name}: observe failed: {exc}")
             continue
@@ -114,6 +142,11 @@ def main() -> int:
         default=1,
         help="Minimum named non-root semantic elements required per app.",
     )
+    parser.add_argument(
+        "--scroll-check",
+        action="store_true",
+        help="Observe, scroll down, observe, scroll up, and observe again.",
+    )
     args = parser.parse_args()
 
     return run_smoke(
@@ -123,6 +156,7 @@ def main() -> int:
         wait_seconds=args.wait,
         contains=args.contains,
         min_named_elements=args.min_named_elements,
+        scroll_check=args.scroll_check,
     )
 
 

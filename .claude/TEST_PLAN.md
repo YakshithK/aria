@@ -6,7 +6,7 @@ Branch: master
 
 **In CI (windows-latest):** Pure unit tests. No live COM/CDP/API calls.
 **Manual / smoke:** Live CDP, UIA, Ollama inference calls. Gated per build step.
-Current local unit count: 97 passing as of 2026-05-24.
+Current local unit count: 99 passing as of 2026-05-24.
 
 ---
 
@@ -108,6 +108,7 @@ python -m cua observe --app vscode
 # smoke_electron.py (not in CI)
 python tests/smoke/smoke_electron.py vscode --launch
 python tests/smoke/smoke_electron.py discord --launch --contains announcements
+python tests/smoke/smoke_electron.py discord --restart --wait 6 --scroll-check --min-named-elements 10
 python tests/smoke/smoke_electron.py notion --restart --wait 8 --min-named-elements 3
 ```
 - Discord launches with debug port
