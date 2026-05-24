@@ -33,3 +33,31 @@ def test_element_names_retries_until_observe_succeeds(monkeypatch):
 
     assert names == ["Friends"]
     assert calls == [(9224, "Discord"), (9224, "Discord")]
+
+
+def test_run_smoke_restarts_app_before_launch(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        smoke_electron,
+        "launch_app",
+        lambda app_name, restart=False: calls.append(("launch", app_name, restart)),
+    )
+    monkeypatch.setattr(
+        smoke_electron,
+        "element_names",
+        lambda app_name: ["Friends"],
+    )
+    monkeypatch.setattr(smoke_electron.time, "sleep", lambda _: None)
+
+    result = smoke_electron.run_smoke(
+        ["discord"],
+        launch=True,
+        restart=True,
+        wait_seconds=0,
+        contains=None,
+        min_named_elements=1,
+    )
+
+    assert result == 0
+    assert calls == [("launch", "discord", True)]

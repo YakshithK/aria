@@ -137,7 +137,7 @@ def test_observe_command_rejects_unsupported_app():
 def test_launch_command_starts_supported_app(monkeypatch):
     monkeypatch.setattr(
         "cua.__main__.launch_app",
-        lambda app_name: {
+        lambda app_name, restart=False: {
             "ok": True,
             "app": "VS Code",
             "port": 9223,

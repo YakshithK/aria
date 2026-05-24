@@ -17,6 +17,7 @@ class LaunchSpec:
     app: str
     port: int
     commands: list[list[str]]
+    process_names: list[str]
 
 
 LAUNCH_SPECS = {
@@ -35,6 +36,7 @@ LAUNCH_SPECS = {
                 "--remote-debugging-port=9223",
             ],
         ],
+        process_names=["Code.exe"],
     ),
     "discord": LaunchSpec(
         app="Discord",
@@ -49,6 +51,7 @@ LAUNCH_SPECS = {
             ],
             ["Discord.exe", "--remote-debugging-port=9224"],
         ],
+        process_names=["Discord.exe"],
     ),
     "notion": LaunchSpec(
         app="Notion",
@@ -57,6 +60,7 @@ LAUNCH_SPECS = {
             ["%LOCALAPPDATA%/Programs/Notion/Notion.exe", "--remote-debugging-port=9225"],
             ["Notion.exe", "--remote-debugging-port=9225"],
         ],
+        process_names=["Notion.exe"],
     ),
 }
 
@@ -77,11 +81,28 @@ def resolve_launch_cwd() -> str | None:
     return None
 
 
-def launch_app(app_name: str) -> dict[str, Any]:
+def terminate_app(app_name: str) -> None:
     normalized_app = app_name.lower()
     spec = LAUNCH_SPECS.get(normalized_app)
     if spec is None:
         raise UnsupportedAppError(f"Unsupported launch app: {app_name}")
+    for process_name in spec.process_names:
+        subprocess.run(
+            ["taskkill", "/IM", process_name, "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+
+
+def launch_app(app_name: str, *, restart: bool = False) -> dict[str, Any]:
+    normalized_app = app_name.lower()
+    spec = LAUNCH_SPECS.get(normalized_app)
+    if spec is None:
+        raise UnsupportedAppError(f"Unsupported launch app: {app_name}")
+
+    if restart:
+        terminate_app(normalized_app)
 
     command = resolve_command(spec.commands)
     process = subprocess.Popen(

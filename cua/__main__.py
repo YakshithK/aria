@@ -70,10 +70,10 @@ def observe(app_name: str = typer.Option(..., "--app")) -> None:
 
 
 @app.command()
-def launch(app_name: str) -> None:
+def launch(app_name: str, restart: bool = typer.Option(False, "--restart")) -> None:
     """Launch a supported app with its CDP debug port enabled."""
     try:
-        result = launch_app(app_name)
+        result = launch_app(app_name, restart=restart)
     except Exception as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from exc

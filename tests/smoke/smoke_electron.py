@@ -40,6 +40,7 @@ def run_smoke(
     app_names: list[str],
     *,
     launch: bool,
+    restart: bool,
     wait_seconds: float,
     contains: str | None,
     min_named_elements: int,
@@ -50,7 +51,7 @@ def run_smoke(
             failures.append(f"{app_name}: unsupported app")
             continue
         if launch:
-            launch_app(app_name)
+            launch_app(app_name, restart=restart)
             time.sleep(wait_seconds)
         try:
             names = element_names(app_name)
@@ -93,6 +94,11 @@ def main() -> int:
         help="Launch each app with its configured debug port before observing.",
     )
     parser.add_argument(
+        "--restart",
+        action="store_true",
+        help="Terminate existing app processes before launching with the debug port.",
+    )
+    parser.add_argument(
         "--wait",
         type=float,
         default=3.0,
@@ -112,7 +118,8 @@ def main() -> int:
 
     return run_smoke(
         args.apps,
-        launch=args.launch,
+        launch=args.launch or args.restart,
+        restart=args.restart,
         wait_seconds=args.wait,
         contains=args.contains,
         min_named_elements=args.min_named_elements,
