@@ -107,7 +107,7 @@ Branch: master
 - [ ] **T31** Test Discord semantic map: launch → verify message content, channel names, server names visible via AX or DOM fallback
 - [ ] **T32** Test Discord virtual list scroll loop: scroll → observe → scroll → confirm all 10+ messages
 - [ ] **T33** Test Notion CDP: launch → verify page content accessible (if sparse, fallback to Google Docs)
-- [ ] **T34** Write `cua/tests/smoke/smoke_electron.py` — automated smoke for T31-T33
+- [x] **T34** Write `tests/smoke/smoke_electron.py` — automated smoke for T31-T33
 
 ### BLOCK 6 — Launch Milestone (Step 6)
 

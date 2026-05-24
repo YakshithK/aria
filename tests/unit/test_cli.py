@@ -128,7 +128,7 @@ def test_observe_command_supports_vscode_port(monkeypatch):
 
 
 def test_observe_command_rejects_unsupported_app():
-    result = CliRunner().invoke(app, ["observe", "--app", "discord"])
+    result = CliRunner().invoke(app, ["observe", "--app", "unknown"])
 
     assert result.exit_code == 1
     assert "Unsupported observe app" in result.stdout

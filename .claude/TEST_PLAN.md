@@ -6,7 +6,7 @@ Branch: master
 
 **In CI (windows-latest):** Pure unit tests. No live COM/CDP/API calls.
 **Manual / smoke:** Live CDP, UIA, Ollama inference calls. Gated per build step.
-Current local unit count: 87 passing as of 2026-05-24.
+Current local unit count: 91 passing as of 2026-05-24.
 
 ---
 
@@ -106,7 +106,9 @@ python -m cua observe --app vscode
 
 ```
 # smoke_electron.py (not in CI)
-python cua/tests/smoke_electron.py
+python tests/smoke/smoke_electron.py vscode --launch
+python tests/smoke/smoke_electron.py discord --launch --contains announcements
+python tests/smoke/smoke_electron.py notion --launch --min-named-elements 3
 ```
 - Discord launches with debug port
 - Semantic map has message content, channel names, server names as accessible nodes
@@ -129,15 +131,15 @@ python -m cua observe --app notepad
 ## Test Files Layout
 
 ```
-cua/
-  tests/
-    unit/
-      test_models.py
-      test_cdp_parser.py
-      test_registry.py
-      test_planner.py
-    smoke/
-      smoke_electron.py   # not run in CI
+tests/
+  unit/
+    test_models.py
+    test_cdp_parser.py
+    test_registry.py
+    test_planner.py
+    test_launcher.py
+  smoke/
+    smoke_electron.py   # not run in CI
       smoke_uia.py        # not run in CI
 ```
 
