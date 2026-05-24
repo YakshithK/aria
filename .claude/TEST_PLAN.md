@@ -5,7 +5,7 @@ Branch: master
 ## Test Boundary
 
 **In CI (windows-latest):** Pure unit tests. No live COM/CDP/API calls.
-**Manual / smoke:** Live CDP, UIA, OpenAI API calls. Gated per build step.
+**Manual / smoke:** Live CDP, UIA, Ollama inference calls. Gated per build step.
 
 ---
 
@@ -141,5 +141,5 @@ python-version: "3.11"
 steps:
   - pip install -e ".[dev]"
   - pytest tests/unit/ -v
-# smoke/ tests are NOT in CI — require live apps and OPENAI_API_KEY
+# smoke/ tests are NOT in CI — require live apps and Ollama running locally
 ```

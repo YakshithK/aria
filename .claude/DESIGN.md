@@ -128,4 +128,4 @@ This 15-minute test either confirms or breaks the entire demo premise.
 | D3 | SemanticMap too large for context window | Filter: depth≤8, count≤500, skip nameless |
 | D4 | Planning loop with no bounds | max_turns=50, timeout=300s, structured failure return |
 | D5 | pywin32/uiautomation are Windows-only | CI on windows-latest, unit tests only |
-| D6 | Planner history format: switched to OpenAI SDK format | Corrected format documented in ARCHITECTURE.md |
+| D6 | Planner history format: OpenAI-compatible (used by Ollama) | Corrected format documented in ARCHITECTURE.md |

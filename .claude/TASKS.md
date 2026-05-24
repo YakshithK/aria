@@ -41,9 +41,9 @@ Branch: master
 
 ### Planner Loop
 - `finish_reason == "tool_calls"` with no matching tool definition → log error, return structured failure
-- `tool_call_id` mismatch in history → OpenAI API returns 400; history format must be validated before each call
+- `tool_call_id` mismatch in history → Ollama returns 400; history format must be validated before each call
 - max_turns exceeded → return `{"status": "max_turns"}`, do not raise exception (allow caller to retry)
-- OpenAI API rate limit → catch `RateLimitError`, sleep 60s, retry (max 2 retries)
+- Ollama not running → catch `ConnectionRefusedError`, surface "run `ollama serve` first"
 - Context window exceeded (large SemanticMap) → reduce element cap and retry observation
 
 ### Action Executor
@@ -81,11 +81,11 @@ Branch: master
 
 ### BLOCK 3 — Planner + 3 Tools (Step 3)
 
-- [ ] **T18** Write `cua/planner.py` — `run_task()` with correct OpenAI tool-use history format (see ARCHITECTURE.md)
+- [ ] **T18** Write `cua/planner.py` — `run_task()` with OpenAI-compatible history format (see ARCHITECTURE.md)
 - [ ] **T19** Define 3 tool schemas in OpenAI function format: `focus_window`, `observe_window`, `set_value`
 - [ ] **T20** Use `ThreadPoolExecutor(max_workers=1)` for all COM/UIA calls; wrap API call in executor too
 - [ ] **T21** Add `max_turns=50`, `timeout=300s` guards
-- [ ] **T22** Set `OPENAI_API_KEY` env var; prompt caching is automatic for prompts >1024 tokens
+- [ ] **T22** Init client: `OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")`; ensure `ollama serve` is running
 - [ ] **T23** Write unit tests: tool schema, history format, max_turns guard, timeout guard (test_planner.py)
 - [ ] **T24** Manual test: `python -m cua run "type 'hello' into Chrome address bar"` works
 

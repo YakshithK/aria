@@ -5,7 +5,7 @@
 ```
 ┌──────────────────────────────────────────────────────────┐
 │  Planning Layer                                          │
-│  - GPT-4o via OpenAI Python SDK                          │
+│  - gemma4:31b-cloud via Ollama (OpenAI-compatible API)   │
 │  - Function calling for action emission                  │
 │  - Structured JSON input from conductor                  │
 └──────────────────────────────────────────────────────────┘
@@ -28,10 +28,11 @@
 
 ## Stack
 
-**Planning model:** GPT-4o (`gpt-4o`) via OpenAI Python SDK.
-Function calling for action emission. Model sees filtered SemanticMap JSON (focused window
-+ registry), not the full tree. Prompt caching is automatic for prompts >1024 tokens
-(no opt-in needed with the OpenAI SDK).
+**Planning model:** `gemma4:31b-cloud` running locally via Ollama.
+Uses the OpenAI Python SDK pointed at Ollama's OpenAI-compatible endpoint
+(`http://localhost:11434/v1`, api_key="ollama"). Function calling for action emission.
+Model sees filtered SemanticMap JSON (focused window + registry), not the full tree.
+No API key or network call required — fully local inference.
 
 **Why Python for v1:** `uiautomation` wraps IUIAutomation COM cleanly — no Rust equivalent.
 CDP WebSocket + JSON is 10 lines in Python, not 200. Rapid prompt iteration (edit + rerun,
@@ -48,7 +49,7 @@ comtypes==1.4.5        # Raw COM access when uiautomation isn't enough
 psutil==6.0.0          # Process enumeration for CDP target discovery
 websockets==13.0       # CDP WebSocket transport
 httpx==0.27.0          # CDP /json/list HTTP endpoint
-openai==1.51.0         # Planning model (OpenAI SDK)
+openai==1.51.0         # OpenAI-compatible client (pointed at Ollama)
 fastapi==0.115.0       # Local conductor HTTP API
 uvicorn==0.30.0        # ASGI server for conductor
 pydantic==2.9.0        # Semantic map schema validation
@@ -92,7 +93,7 @@ class SemanticMap(BaseModel):
 
 ```python
 class Action(BaseModel):
-    type: Literal["focus_window", "invoke", "set_value",
+    type: Literal["focus_window", "observe_window", "invoke", "set_value",
                   "type", "scroll", "wait_for", "key_combo"]
     target_id: Optional[str]
     payload: Optional[dict]
@@ -149,7 +150,7 @@ async def run_task(task: str, max_turns: int = 50, timeout: float = 300.0) -> di
         response = await asyncio.get_event_loop().run_in_executor(
             None,
             lambda: client.chat.completions.create(
-                model="gpt-4o",
+                model="gemma4:31b-cloud",
                 tools=[focus_window_tool, observe_tool, set_value_tool, ...],
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
@@ -165,7 +166,7 @@ async def run_task(task: str, max_turns: int = 50, timeout: float = 300.0) -> di
         if choice.finish_reason == "stop":
             return {"status": "complete", "turns": turn + 1}
 
-        # OpenAI tool-use history format:
+        # OpenAI-compatible tool-use history format (Ollama follows this spec):
         # Assistant turn: include content + tool_calls from the response message
         history.append({
             "role": "assistant",
@@ -187,7 +188,12 @@ async def run_task(task: str, max_turns: int = 50, timeout: float = 300.0) -> di
     return {"status": "max_turns", "turns": max_turns}
 ```
 
-**Tool schema format** (OpenAI function calling):
+**Client init** (Ollama's OpenAI-compatible endpoint):
+```python
+client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+```
+
+**Tool schema format** (OpenAI-compatible function calling):
 ```python
 focus_window_tool = {
     "type": "function",

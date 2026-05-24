@@ -45,15 +45,15 @@ result links, input field, buttons as named elements with roles.
 
 ---
 
-## Step 3: Claude as Planner (2 Tools)
+## Step 3: LLM Planner (3 Tools)
 
 **Artifact:** `python -m cua run "type 'hello' into the Chrome address bar"` completes
-the task using Claude as the planner.
+the task using gemma4:31b-cloud via Ollama as the planner.
 
 **What to build:**
 - FastAPI conductor server on localhost
 - Planning loop (see ARCHITECTURE.md)
-- Tool definitions: `focus_window`, `set_value` (CDP Input.insertText)
+- Tool definitions: `focus_window`, `observe_window`, `set_value` (CDP Input.insertText)
 - System prompt: schema description, action semantics, "no pixels" constraint
 - Token + latency logging to stdout
 
