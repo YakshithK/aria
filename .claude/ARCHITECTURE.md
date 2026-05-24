@@ -26,21 +26,34 @@
                        Electron debug
 ```
 
-## Python Dependencies
+## Stack
+
+**Planning model:** Claude Sonnet 4.5 (`claude-sonnet-4-5`) via Anthropic Python SDK.
+Function calling for action emission. Model sees filtered SemanticMap JSON (focused window
++ registry), not the full tree. Prompt caching enabled on the system prompt
+(`cache_control: {"type": "ephemeral"}`).
+
+**Why Python for v1:** `uiautomation` wraps IUIAutomation COM cleanly — no Rust equivalent.
+CDP WebSocket + JSON is 10 lines in Python, not 200. Rapid prompt iteration (edit + rerun,
+not recompile). Migrate to Rust when the GIL becomes the measured bottleneck at >100
+UIA nodes/second.
+
+**Why FastAPI for conductor:** Async from the start — CDP WebSocket and UIA events are both
+async. Pydantic integration for SemanticMap validation. Local-only; no production concerns.
 
 ```
-uiautomation==2.0.20   # UIA COM wrapper
-pywin32==306           # Win32 API (EnumWindows, SetForegroundWindow)
-comtypes==1.4.5        # Raw COM when uiautomation isn't enough
+uiautomation==2.0.20   # UIA COM wrapper (wraps IUIAutomation cleanly)
+pywin32==306           # Win32 API: EnumWindows, SetForegroundWindow, SendInput
+comtypes==1.4.5        # Raw COM access when uiautomation isn't enough
 psutil==6.0.0          # Process enumeration for CDP target discovery
-websockets==13.0       # CDP transport
-httpx==0.27.0          # CDP /json/list endpoint
-anthropic==0.39.0      # Planning model
-fastapi==0.115.0       # Local conductor API
-uvicorn==0.30.0        # ASGI server
-pydantic==2.9.0        # Semantic map schema
-typer==0.12.5          # CLI
-rich==13.8.0           # Terminal output
+websockets==13.0       # CDP WebSocket transport
+httpx==0.27.0          # CDP /json/list HTTP endpoint
+anthropic==0.39.0      # Planning model (Anthropic SDK)
+fastapi==0.115.0       # Local conductor HTTP API
+uvicorn==0.30.0        # ASGI server for conductor
+pydantic==2.9.0        # Semantic map schema validation
+typer==0.12.5          # CLI entry points
+rich==13.8.0           # Terminal output for demos
 ```
 
 ## Normalized Semantic Map Schema
@@ -173,16 +186,18 @@ async def run_task(task: str, max_turns: int = 50, timeout: float = 300.0) -> di
 **History format invariant**: Every `tool_use` block in an assistant message must have a matching
 `tool_result` in the following user message, keyed by `tool_use_id`. Mismatches cause API errors.
 
-## Electron App Ports (v1)
+## CDP Port Allocation
 
-| App     | Launch flag                    | Port |
-|---------|-------------------------------|------|
-| Chrome  | --remote-debugging-port=9222  | 9222 |
-| VS Code | code --remote-debugging-port= | 9223 |
-| Discord | Discord.exe with flag          | 9224 |
-| Notion  | Notion.exe with flag           | 9225 |
+Each app gets a unique port — collisions break CDP target discovery.
 
-Each app gets a unique port to avoid collisions.
+| App     | Port | Launch flag                         |
+|---------|------|-------------------------------------|
+| Chrome  | 9222 | `--remote-debugging-port=9222`      |
+| VS Code | 9223 | `code --remote-debugging-port=9223` |
+| Discord | 9224 | `Discord.exe --remote-debugging-port=9224` |
+| Notion  | 9225 | `Notion.exe --remote-debugging-port=9225` |
+| Slack   | 9226 | `slack --remote-debugging-port=9226` |
+| Edge    | 9227 | `msedge --remote-debugging-port=9227` |
 
 ## What Stays Out of v1
 
