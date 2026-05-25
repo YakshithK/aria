@@ -15,15 +15,19 @@ from aria.models import Action
 OLLAMA_MODEL = "gemma4:31b-cloud"
 OLLAMA_BASE_URL = "http://localhost:11434/v1"
 
-SYSTEM_PROMPT = """You are CUA, a semantic Windows computer-use agent.
+SYSTEM_PROMPT = """You are Aria, a semantic Windows computer-use agent.
 Use only the provided structured tools. Do not ask for screenshots or pixels.
-Observe the current semantic map, choose one small action at a time, and stop
-when the user's task is complete.
+Each turn you receive the current semantic map. Choose one action, execute it,
+then observe the new state before acting again.
 
-Use element ids containing nodeId for element-only tools: set_value and invoke.
-Use navigate for opening URLs and web searches. Do not use key_combo for the
-browser address bar; CDP page key events target web content, not browser chrome.
-Use key_combo and type only for active-page keyboard input."""
+Rules:
+- After every invoke or set_value, check the next semantic map to verify the UI changed. If it did not change, try a different element or approach — do not repeat the same action.
+- If an element click produces no visible change after 2 attempts, scroll to reveal more elements or use a different navigation path.
+- Use element ids containing nodeId for element-only tools: set_value and invoke.
+- For multi-app tasks, call focus_window with the target CDP window id (e.g. cdp:discord:XXXX) before using active-page tools like type, scroll, key_combo, or navigate in that app.
+- Use navigate for opening URLs and web searches.
+- Use key_combo and type only for active-page keyboard input (CDP page events, not browser chrome).
+- Stop and return when the task is fully complete."""
 
 
 OLLAMA_TOOLS: list[dict[str, Any]] = [
@@ -284,6 +288,7 @@ class OllamaPlanner:
             raise ValueError("OllamaPlanner requires a conductor")
         self.conductor = conductor
         self.monotonic = monotonic
+        self._owns_executor = executor is None
         self.executor = executor or ThreadPoolExecutor(max_workers=1)
         self.model = model
 
@@ -298,67 +303,110 @@ class OllamaPlanner:
         tool_trace: list[dict[str, Any]] = []
         repeated_observe_count = 0
         last_observe_result: str | None = None
+        last_action_key: tuple[str, str | None] | None = None
+        repeated_action_count = 0
         start = self.monotonic()
 
-        for turn in range(max_turns):
-            if self.monotonic() - start > timeout:
-                return {"status": "timeout", "turns": turn}
+        try:
+            for turn in range(max_turns):
+                if self.monotonic() - start > timeout:
+                    result = {"status": "timeout", "turns": turn}
+                    if tool_trace:
+                        result["tool_trace"] = tool_trace
+                    return result
 
-            semantic_map = await self.conductor.get_current_state(scope="focused+registry")
-            messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": task},
-                *history,
-                {"role": "user", "content": semantic_map},
-            ]
-            response = await asyncio.get_event_loop().run_in_executor(
-                self.executor,
-                lambda: self.client.create_completion(
-                    model=self.model,
-                    tools=OLLAMA_TOOLS,
-                    messages=messages,
-                ),
-            )
-            choice = response.choices[0]
-            if choice.finish_reason == "stop":
-                result = {"status": "complete", "turns": turn + 1}
-                if tool_trace:
-                    result["tool_trace"] = tool_trace
-                return result
-
-            tool_results = []
-            for tool_call in choice.message.tool_calls or []:
-                action = action_from_tool_call(tool_call)
-                result = await self.conductor.execute(action)
-                result_text = str(result)
-                tool_results.append(result_text)
-                tool_trace.append(
-                    {
-                        "name": tool_call.function.name,
-                        "action": action.model_dump(),
-                        "result": result_text,
-                    }
+                semantic_map = await self.conductor.get_current_state(scope="focused+registry")
+                messages = [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": task},
+                    *history,
+                    {"role": "user", "content": semantic_map},
+                ]
+                response = await asyncio.get_event_loop().run_in_executor(
+                    self.executor,
+                    lambda: self.client.create_completion(
+                        model=self.model,
+                        tools=OLLAMA_TOOLS,
+                        messages=messages,
+                    ),
                 )
-                if action.type == "observe_window":
-                    if result_text == last_observe_result:
-                        repeated_observe_count += 1
-                    else:
-                        repeated_observe_count = 1
-                        last_observe_result = result_text
-                    if repeated_observe_count >= 4:
-                        return {
-                            "status": "stalled",
-                            "turns": turn + 1,
-                            "reason": "repeated_observe_without_new_information",
-                            "message": (
-                                "Planner repeatedly called observe_window without "
-                                "receiving new semantic information."
-                            ),
-                            "tool_trace": tool_trace,
-                        }
-                else:
-                    repeated_observe_count = 0
-                    last_observe_result = None
-            append_tool_history(history, choice.message, tool_results)
+                choice = response.choices[0]
+                if choice.finish_reason == "stop":
+                    result = {"status": "complete", "turns": turn + 1}
+                    if tool_trace:
+                        result["tool_trace"] = tool_trace
+                    return result
 
-        return {"status": "max_turns", "turns": max_turns}
+                tool_results = []
+                for tool_call in choice.message.tool_calls or []:
+                    action = action_from_tool_call(tool_call)
+                    result = await self.conductor.execute(action)
+                    result_text = str(result)
+                    tool_results.append(result_text)
+                    tool_trace.append(
+                        {
+                            "name": tool_call.function.name,
+                            "action": action.model_dump(),
+                            "result": result_text,
+                        }
+                    )
+                    action_key = (action.type, action.target_id)
+                    if action.type == "observe_window":
+                        if result_text == last_observe_result:
+                            repeated_observe_count += 1
+                        else:
+                            repeated_observe_count = 1
+                            last_observe_result = result_text
+                        if repeated_observe_count >= 4:
+                            return {
+                                "status": "stalled",
+                                "turns": turn + 1,
+                                "reason": "repeated_observe_without_new_information",
+                                "message": (
+                                    "Planner repeatedly called observe_window without "
+                                    "receiving new semantic information."
+                                ),
+                                "tool_trace": tool_trace,
+                            }
+                        repeated_action_count = 0
+                        last_action_key = None
+                    else:
+                        repeated_observe_count = 0
+                        last_observe_result = None
+                        if action_key == last_action_key:
+                            repeated_action_count += 1
+                        else:
+                            last_action_key = action_key
+                            repeated_action_count = 1
+                        if repeated_action_count >= 10:
+                            return {
+                                "status": "stalled",
+                                "turns": turn + 1,
+                                "reason": "repeated_action_without_progress",
+                                "message": (
+                                    f"Planner repeated {action.type} on "
+                                    f"{action.target_id} {repeated_action_count} times "
+                                    "without progress."
+                                ),
+                                "tool_trace": tool_trace,
+                            }
+                        if repeated_action_count >= 3:
+                            history.append({
+                                "role": "user",
+                                "content": (
+                                    f"Notice: you have now repeated {action.type} on "
+                                    f"'{action.target_id}' {repeated_action_count} times. "
+                                    "The UI does not appear to be changing. Try a different "
+                                    "element, scroll to reveal more content, or use a "
+                                    "different navigation approach."
+                                ),
+                            })
+                append_tool_history(history, choice.message, tool_results)
+
+            result = {"status": "max_turns", "turns": max_turns}
+            if tool_trace:
+                result["tool_trace"] = tool_trace
+            return result
+        finally:
+            if self._owns_executor:
+                self.executor.shutdown(wait=False, cancel_futures=True)
