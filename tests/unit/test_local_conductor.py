@@ -58,8 +58,32 @@ def test_local_conductor_rejects_focus_window_without_hwnd_target():
 
     assert result == {
         "ok": False,
-        "error": "focus_window requires target_id like win:0x1234 or a numeric hwnd",
+        "error": "focus_window requires target_id like cdp:app:target, win:0x1234, or a numeric hwnd",
     }
+
+
+def test_local_conductor_focus_window_selects_cdp_backend():
+    class FakeBackend:
+        app = "Notion"
+        port = 9225
+
+        def __init__(self):
+            self._targets_by_id = {"page-2": {"id": "page-2"}}
+
+    backend = FakeBackend()
+    conductor = LocalConductor(cdp_backends=[object(), backend], foreground_controller=object())
+
+    result = asyncio.run(
+        conductor.execute(Action(type="focus_window", target_id="cdp:notion:page-2"))
+    )
+
+    assert result == {
+        "ok": True,
+        "target_id": "cdp:notion:page-2",
+        "backend": "Notion",
+        "port": 9225,
+    }
+    assert conductor.cdp_backend is backend
 
 
 def test_win32_foreground_controller_retries_thread_attach(monkeypatch):
@@ -122,7 +146,9 @@ def test_local_conductor_runs_observe_in_worker_thread():
             return '{"ok":true}'
 
     class FakeBackend:
-        def observe(self):
+        app = "TestApp"
+
+        def observe(self, **kwargs):
             return FakeMap()
 
     conductor = LocalConductor(cdp_backend=FakeBackend())

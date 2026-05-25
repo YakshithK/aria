@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import json
 import time
 from collections.abc import Callable
@@ -24,7 +25,7 @@ Rules:
 - After every invoke or set_value, check the next semantic map to verify the UI changed. If it did not change, try a different element or approach — do not repeat the same action.
 - If an element click produces no visible change after 2 attempts, scroll to reveal more elements or use a different navigation path.
 - Use element ids containing nodeId for element-only tools: set_value and invoke.
-- For multi-app tasks, call focus_window with the target CDP window id (e.g. cdp:discord:XXXX) before using active-page tools like type, scroll, key_combo, or navigate in that app.
+- For multi-app tasks, call focus_window using the exact window id from the semantic map's `windows[].id` field (e.g. the value of `focused_window`). Never invent or guess a window id.
 - Use navigate for opening URLs and web searches.
 - Use key_combo and type only for active-page keyboard input (CDP page events, not browser chrome).
 - Stop and return when the task is fully complete."""
@@ -305,6 +306,7 @@ class OllamaPlanner:
         last_observe_result: str | None = None
         last_action_key: tuple[str, str | None] | None = None
         repeated_action_count = 0
+        had_failed_tool_result = False
         start = self.monotonic()
 
         try:
@@ -332,6 +334,19 @@ class OllamaPlanner:
                 )
                 choice = response.choices[0]
                 if choice.finish_reason == "stop":
+                    if had_failed_tool_result:
+                        result = {
+                            "status": "failed",
+                            "turns": turn + 1,
+                            "reason": "model_stopped_after_failed_tool",
+                            "message": (
+                                "Planner stopped after one or more tool calls failed; "
+                                "the task cannot be marked complete."
+                            ),
+                        }
+                        if tool_trace:
+                            result["tool_trace"] = tool_trace
+                        return result
                     result = {"status": "complete", "turns": turn + 1}
                     if tool_trace:
                         result["tool_trace"] = tool_trace
@@ -340,7 +355,11 @@ class OllamaPlanner:
                 tool_results = []
                 for tool_call in choice.message.tool_calls or []:
                     action = action_from_tool_call(tool_call)
-                    result = await self.conductor.execute(action)
+                    result = _guard_action_against_task(task, semantic_map, action)
+                    if result is None:
+                        result = await self.conductor.execute(action)
+                    if _has_failed_tool_result(result):
+                        had_failed_tool_result = True
                     result_text = str(result)
                     tool_results.append(result_text)
                     tool_trace.append(
@@ -378,7 +397,7 @@ class OllamaPlanner:
                         else:
                             last_action_key = action_key
                             repeated_action_count = 1
-                        if repeated_action_count >= 10:
+                        if repeated_action_count >= 4:
                             return {
                                 "status": "stalled",
                                 "turns": turn + 1,
@@ -410,3 +429,145 @@ class OllamaPlanner:
         finally:
             if self._owns_executor:
                 self.executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _guard_action_against_task(
+    task: str,
+    semantic_map_json: str,
+    action: Action,
+) -> dict[str, Any] | None:
+    wrong_app_navigation = _guard_wrong_app_navigation(task, action)
+    if wrong_app_navigation is not None:
+        return wrong_app_navigation
+
+    try:
+        semantic_map = json.loads(semantic_map_json)
+    except json.JSONDecodeError:
+        semantic_map = {}
+
+    login_flow = _guard_unexpected_login_flow(task, semantic_map, action)
+    if login_flow is not None:
+        return login_flow
+
+    requested_channel = _requested_discord_channel(task)
+    if not requested_channel or action.type != "invoke" or not action.target_id:
+        return None
+    element = (semantic_map.get("elements") or {}).get(action.target_id)
+    if not isinstance(element, dict):
+        return None
+    name = str(element.get("name") or "")
+    role = str(element.get("role") or "")
+    value = str(element.get("value") or "")
+    is_discord_channel = (
+        role == "link"
+        and "discord.com/channels/" in value
+        and "text channel" in name.lower()
+    )
+    if not is_discord_channel:
+        return None
+    if requested_channel in _normalize_channel_name(name):
+        return None
+    return {
+        "ok": False,
+        "reason": "wrong_discord_channel",
+        "requested_channel": requested_channel,
+        "clicked_channel": name,
+        "message": (
+            f"Do not click Discord channel {name!r}; the task asks for "
+            f"#{requested_channel}. Use quick switcher/search or scroll until the "
+            "exact requested channel is visible."
+        ),
+    }
+
+
+def _guard_unexpected_login_flow(
+    task: str,
+    semantic_map: dict[str, Any],
+    action: Action,
+) -> dict[str, Any] | None:
+    task_lower = task.lower()
+    if any(term in task_lower for term in ("log in", "login", "sign in", "authenticate")):
+        return None
+    payload_text = str((action.payload or {}).get("text") or "")
+    if payload_text in {"USER_EMAIL", "USER_PASSWORD"}:
+        return {
+            "ok": False,
+            "reason": "placeholder_credentials",
+            "message": (
+                "Do not enter placeholder credentials. The task should use the "
+                "already-open Discord and Notion app targets."
+            ),
+        }
+    if not action.target_id:
+        return None
+    element = (semantic_map.get("elements") or {}).get(action.target_id)
+    if not isinstance(element, dict):
+        return None
+    name = str(element.get("name") or "").lower()
+    role = str(element.get("role") or "").lower()
+    login_terms = (
+        "log in",
+        "login",
+        "sign in",
+        "email or phone number",
+        "password",
+        "wait! are you human?",
+    )
+    if any(term in name for term in login_terms):
+        windows = semantic_map.get("windows") or []
+        window_ids = [w.get("id") for w in windows if w.get("id")]
+        return {
+            "ok": False,
+            "reason": "unexpected_login_flow",
+            "message": (
+                f"Refusing to interact with login/human-check UI {name!r}. "
+                "The app targets you should use are already open. "
+                f"Available window ids: {window_ids}. "
+                "Call focus_window with one of those ids to switch to the correct app."
+            ),
+            "role": role,
+            "available_windows": window_ids,
+        }
+    return None
+
+
+def _guard_wrong_app_navigation(task: str, action: Action) -> dict[str, Any] | None:
+    if action.type != "navigate" or not action.target_id:
+        return None
+    url = str((action.payload or {}).get("url") or "").lower()
+    target = action.target_id.lower()
+    task_lower = task.lower()
+    if target.startswith("cdp:notion:") and "discord.com" in url:
+        return {
+            "ok": False,
+            "reason": "wrong_app_navigation",
+            "message": (
+                "Do not navigate the Notion target to Discord. Use the Discord "
+                "window/target for Discord, and keep Notion for the final paste."
+            ),
+        }
+    if target.startswith("cdp:discord:") and "notion" in url and "notion" in task_lower:
+        return {
+            "ok": False,
+            "reason": "wrong_app_navigation",
+            "message": (
+                "Do not navigate the Discord target to Notion. Use the Notion "
+                "window/target for the final paste."
+            ),
+        }
+    return None
+
+
+def _has_failed_tool_result(result: Any) -> bool:
+    return isinstance(result, dict) and result.get("ok") is False
+
+
+def _requested_discord_channel(task: str) -> str | None:
+    match = re.search(r"#([A-Za-z0-9_-]+)", task)
+    if not match:
+        return None
+    return _normalize_channel_name(match.group(1))
+
+
+def _normalize_channel_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9_-]+", "", value.lower())

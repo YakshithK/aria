@@ -99,7 +99,7 @@ class LocalConductor:
         maps: list[SemanticMap] = []
         for backend in self.cdp_backends:
             try:
-                m = await asyncio.to_thread(backend.observe)
+                m = await asyncio.to_thread(lambda b=backend: b.observe(title=getattr(b, "app", None)))
                 if not maps:
                     self._active_backend = backend
                 maps.append(m)
@@ -124,13 +124,22 @@ class LocalConductor:
         if action.type == "observe_window":
             return await self.get_current_state(scope="focused+registry")
         if action.type == "focus_window":
+            cdp_backend = self._backend_for_window(str(action.target_id))
+            if cdp_backend is not None:
+                self._active_backend = cdp_backend
+                return {
+                    "ok": True,
+                    "target_id": action.target_id,
+                    "backend": cdp_backend.app,
+                    "port": cdp_backend.port,
+                }
             hwnd = _parse_hwnd_target(action.target_id)
             if hwnd is None:
                 return {
                     "ok": False,
                     "error": (
-                        "focus_window requires target_id like win:0x1234 or a "
-                        "numeric hwnd"
+                        "focus_window requires target_id like cdp:app:target, "
+                        "win:0x1234, or a numeric hwnd"
                     ),
                 }
             return await asyncio.to_thread(
@@ -147,19 +156,25 @@ class LocalConductor:
             text = (action.payload or {}).get("text")
             if not isinstance(text, str):
                 return {"ok": False, "error": "type requires payload.text"}
-            return await asyncio.to_thread(self._active_backend.insert_text, text)
+            backend = self._backend_for_window(str(action.target_id)) or self._active_backend
+            self._active_backend = backend
+            return await asyncio.to_thread(backend.insert_text, text)
         if action.type == "navigate":
             url = (action.payload or {}).get("url")
             if not isinstance(url, str):
                 return {"ok": False, "error": "navigate requires payload.url"}
-            return await asyncio.to_thread(self._active_backend.navigate, url)
+            backend = self._backend_for_window(str(action.target_id)) or self._active_backend
+            self._active_backend = backend
+            return await asyncio.to_thread(backend.navigate, url)
         if action.type == "invoke":
             backend = self._backend_for_element(str(action.target_id))
             return await asyncio.to_thread(backend.invoke, str(action.target_id))
         if action.type == "scroll":
             payload = action.payload or {}
+            backend = self._backend_for_window(str(action.target_id)) or self._active_backend
+            self._active_backend = backend
             return await asyncio.to_thread(
-                self._active_backend.scroll,
+                backend.scroll,
                 int(payload.get("x", 0)),
                 int(payload.get("y", 0)),
                 int(payload.get("delta_x", 0)),
@@ -169,7 +184,9 @@ class LocalConductor:
             keys = (action.payload or {}).get("keys")
             if not isinstance(keys, list) or not all(isinstance(key, str) for key in keys):
                 return {"ok": False, "error": "key_combo requires payload.keys"}
-            return await asyncio.to_thread(self._active_backend.key_combo, keys)
+            backend = self._backend_for_window(str(action.target_id)) or self._active_backend
+            self._active_backend = backend
+            return await asyncio.to_thread(backend.key_combo, keys)
         if action.type == "wait_for":
             return await asyncio.to_thread(self._wait_for, action)
         raise NotImplementedError(f"Action not implemented yet: {action.type}")
@@ -182,6 +199,21 @@ class LocalConductor:
                 if target_key in getattr(backend, "_targets_by_id", {}):
                     return backend
         return self._active_backend
+
+    def _backend_for_window(self, target_id: str) -> CDPBackend | None:
+        parts = target_id.split(":")
+        if len(parts) < 3 or parts[0] != "cdp":
+            return None
+        target_key = parts[-1]
+        app_key = parts[1].lower()
+        for backend in self.cdp_backends:
+            targets = getattr(backend, "_targets_by_id", {})
+            app = getattr(backend, "app", "").lower()
+            if target_key in targets and (
+                app_key == app or app_key in app.replace(" ", "")
+            ):
+                return backend
+        return None
 
     def _wait_for(self, action: Action) -> dict[str, Any]:
         target_id = str(action.target_id)
