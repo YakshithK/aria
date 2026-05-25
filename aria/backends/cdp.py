@@ -8,7 +8,7 @@ from typing import Any, Protocol
 import httpx
 import websockets
 
-from cua.models import Element, SemanticMap, Window
+from aria.models import Element, SemanticMap, Window
 
 
 class CDPError(RuntimeError):

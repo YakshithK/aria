@@ -7,8 +7,8 @@ import time
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from cua.backends.cdp import CDPBackend
-from cua.models import Action
+from aria.backends.cdp import CDPBackend
+from aria.models import Action
 
 
 class ForegroundError(RuntimeError):

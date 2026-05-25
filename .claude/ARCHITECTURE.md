@@ -42,7 +42,7 @@ UIA nodes/second.
 **Current conductor shape:** In-process CLI conductor (`LocalConductor`) for v1 iteration.
 It uses worker threads around backend calls and returns structured action results. A
 FastAPI daemon can be added later if another process needs to drive the same conductor,
-but the current working path is `python -m cua ...` without a server.
+but the current working path is `python -m aria ...` without a server.
 
 ```
 uiautomation==2.0.20   # UIA COM wrapper (wraps IUIAutomation cleanly)

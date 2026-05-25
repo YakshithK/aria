@@ -1,6 +1,6 @@
 import pytest
 
-from cua.backends.cdp import (
+from aria.backends.cdp import (
     CDPBackend,
     CDPNotAvailableError,
     HttpWebSocketCDPClient,
@@ -188,7 +188,7 @@ def test_http_client_uses_ipv4_loopback_for_json_list(monkeypatch):
         requested["timeout"] = timeout
         raise RuntimeError("stop")
 
-    monkeypatch.setattr("cua.backends.cdp.httpx.get", fake_get)
+    monkeypatch.setattr("aria.backends.cdp.httpx.get", fake_get)
 
     with pytest.raises(RuntimeError, match="stop"):
         HttpWebSocketCDPClient(9222).list_targets()
@@ -203,7 +203,7 @@ def test_http_client_error_mentions_debug_port(monkeypatch):
     def fake_get(url, timeout):
         raise __import__("httpx").ConnectError("no listener")
 
-    monkeypatch.setattr("cua.backends.cdp.httpx.get", fake_get)
+    monkeypatch.setattr("aria.backends.cdp.httpx.get", fake_get)
 
     with pytest.raises(CDPNotAvailableError, match="--remote-debugging-port=9222"):
         HttpWebSocketCDPClient(9222).list_targets()
@@ -247,10 +247,10 @@ def test_http_client_retries_until_ax_tree_has_useful_nodes(monkeypatch):
         return None
 
     monkeypatch.setattr(
-        "cua.backends.cdp.websockets.connect",
+        "aria.backends.cdp.websockets.connect",
         lambda websocket_url, open_timeout: FakeWebSocket(),
     )
-    monkeypatch.setattr("cua.backends.cdp.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("aria.backends.cdp.asyncio.sleep", fake_sleep)
 
     nodes = HttpWebSocketCDPClient(9222).get_full_ax_tree(
         {"webSocketDebuggerUrl": "ws://example"}
@@ -462,7 +462,7 @@ def test_http_client_set_value_sends_resolve_and_runtime_commands(monkeypatch):
             return __import__("json").dumps(self.responses.pop(0))
 
     monkeypatch.setattr(
-        "cua.backends.cdp.websockets.connect",
+        "aria.backends.cdp.websockets.connect",
         lambda websocket_url, open_timeout: FakeWebSocket(),
     )
 
@@ -507,7 +507,7 @@ def test_http_client_invoke_sends_click_function(monkeypatch):
             return __import__("json").dumps(self.responses.pop(0))
 
     monkeypatch.setattr(
-        "cua.backends.cdp.websockets.connect",
+        "aria.backends.cdp.websockets.connect",
         lambda websocket_url, open_timeout: FakeWebSocket(),
     )
 
@@ -537,7 +537,7 @@ def test_http_client_scroll_sends_mouse_wheel_event(monkeypatch):
             return __import__("json").dumps({"id": 1, "result": {}})
 
     monkeypatch.setattr(
-        "cua.backends.cdp.websockets.connect",
+        "aria.backends.cdp.websockets.connect",
         lambda websocket_url, open_timeout: FakeWebSocket(),
     )
 
@@ -588,7 +588,7 @@ def test_http_client_key_combo_sends_key_events(monkeypatch):
             return __import__("json").dumps(self.responses.pop(0))
 
     monkeypatch.setattr(
-        "cua.backends.cdp.websockets.connect",
+        "aria.backends.cdp.websockets.connect",
         lambda websocket_url, open_timeout: FakeWebSocket(),
     )
 
@@ -623,7 +623,7 @@ def test_http_client_insert_text_sends_input_insert_text(monkeypatch):
             return __import__("json").dumps({"id": 1, "result": {}})
 
     monkeypatch.setattr(
-        "cua.backends.cdp.websockets.connect",
+        "aria.backends.cdp.websockets.connect",
         lambda websocket_url, open_timeout: FakeWebSocket(),
     )
 
@@ -657,7 +657,7 @@ def test_http_client_navigate_sends_page_navigate(monkeypatch):
             return __import__("json").dumps({"id": 1, "result": {"frameId": "frame-1"}})
 
     monkeypatch.setattr(
-        "cua.backends.cdp.websockets.connect",
+        "aria.backends.cdp.websockets.connect",
         lambda websocket_url, open_timeout: FakeWebSocket(),
     )
 

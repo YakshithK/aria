@@ -9,7 +9,7 @@ from typing import Any, Protocol
 
 from openai import OpenAI
 
-from cua.models import Action
+from aria.models import Action
 
 
 OLLAMA_MODEL = "gemma4:31b-cloud"

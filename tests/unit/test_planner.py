@@ -2,8 +2,8 @@ import asyncio
 import json
 from dataclasses import dataclass
 
-from cua.models import Action, SemanticMap
-from cua.planner import (
+from aria.models import Action, SemanticMap
+from aria.planner import (
     OLLAMA_BASE_URL,
     OLLAMA_MODEL,
     OLLAMA_TOOLS,
@@ -264,7 +264,7 @@ def test_ollama_chat_client_uses_local_openai_compatible_endpoint(monkeypatch):
             captured["base_url"] = base_url
             captured["api_key"] = api_key
 
-    monkeypatch.setattr("cua.planner.OpenAI", FakeOpenAI)
+    monkeypatch.setattr("aria.planner.OpenAI", FakeOpenAI)
 
     client = OllamaChatClient()
 

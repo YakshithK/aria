@@ -4,11 +4,11 @@ from rich.console import Console
 from rich.table import Table
 import typer
 
-from cua.backends.cdp import CDPBackend
-from cua.conductor.local import LocalConductor
-from cua.conductor.registry import WindowRegistry
-from cua.launcher import LAUNCH_SPECS, launch_app
-from cua.planner import OllamaPlanner
+from aria.backends.cdp import CDPBackend
+from aria.conductor.local import LocalConductor
+from aria.conductor.registry import WindowRegistry
+from aria.launcher import LAUNCH_SPECS, launch_app
+from aria.planner import OllamaPlanner
 
 app = typer.Typer(help="CUA Windows semantic computer-use agent.")
 console = Console()

@@ -1,4 +1,4 @@
-# CUA — Windows Computer Agent
+# Aria — Windows Computer Agent
 
 Semantic-first Windows agent using UI Automation (UIA) + Chrome DevTools Protocol (CDP) instead of screenshots. No vision fallback in v1.
 

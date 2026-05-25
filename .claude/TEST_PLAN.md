@@ -65,14 +65,14 @@ Current local unit count: 102 passing as of 2026-05-24.
 
 ### Step 1: Window registry
 ```
-python -m cua windows
+python -m aria windows
 ```
 - All open windows listed with correct backend classification
 - Chrome → cdp, Notepad → uia, unknown apps → unsupported
 
 ### Step 2: CDP for Chrome
 ```
-python -m cua observe --app chrome
+python -m aria observe --app chrome
 ```
 - SemanticMap JSON printed to stdout
 - Element count ≤ 500, max depth ≤ 8
@@ -81,7 +81,7 @@ python -m cua observe --app chrome
 
 ### Step 3: Planner (Ollama tools)
 ```
-python -m cua run "navigate Chrome to https://www.google.com/search?q=hello"
+python -m aria run "navigate Chrome to https://www.google.com/search?q=hello"
 ```
 - Agent calls `navigate` for browser URL/search tasks
 - Page navigates without depending on browser chrome keyboard shortcuts
@@ -89,7 +89,7 @@ python -m cua run "navigate Chrome to https://www.google.com/search?q=hello"
 
 ### Step 4: Full action executor
 ```
-python -m cua run "click the first search result on the current Chrome page"
+python -m aria run "click the first search result on the current Chrome page"
 ```
 - `invoke` action fires on correct element
 - DOM fallback `invoke` works for sparse AX search result pages
@@ -98,8 +98,8 @@ python -m cua run "click the first search result on the current Chrome page"
 
 ### Step 5: Electron support
 ```
-python -m cua launch vscode
-python -m cua observe --app vscode
+python -m aria launch vscode
+python -m aria observe --app vscode
 ```
 - VS Code window registered with backend=cdp
 - SemanticMap shows file explorer elements
@@ -122,7 +122,7 @@ python tests/smoke/smoke_electron.py notion --restart --wait 8 --min-named-eleme
 
 ### Step 7: UIA backend (post-launch)
 ```
-python -m cua observe --app notepad
+python -m aria observe --app notepad
 ```
 - Notepad elements present in SemanticMap with backend=uia
 - 10-task matrix: Notepad text operations, File Explorer navigation

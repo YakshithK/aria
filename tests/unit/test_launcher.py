@@ -1,6 +1,6 @@
 import pytest
 
-from cua.launcher import (
+from aria.launcher import (
     LAUNCH_SPECS,
     UnsupportedAppError,
     launch_app,
@@ -35,9 +35,9 @@ def test_launch_specs_have_stable_ports(app_name, app, port):
 
 
 def test_resolve_command_uses_first_available_candidate(monkeypatch):
-    monkeypatch.setattr("cua.launcher.shutil.which", lambda executable: None)
+    monkeypatch.setattr("aria.launcher.shutil.which", lambda executable: None)
     monkeypatch.setattr(
-        "cua.launcher.Path.exists",
+        "aria.launcher.Path.exists",
         lambda path: str(path).endswith("Code.exe"),
     )
 
@@ -53,7 +53,7 @@ def test_resolve_command_uses_first_available_candidate(monkeypatch):
 
 def test_resolve_command_returns_resolved_path_from_path_lookup(monkeypatch):
     monkeypatch.setattr(
-        "cua.launcher.shutil.which",
+        "aria.launcher.shutil.which",
         lambda executable: "C:/Users/example/AppData/Local/Programs/Microsoft VS Code/bin/code.cmd"
         if executable == "code"
         else None,
@@ -73,10 +73,10 @@ def test_resolve_command_skips_extensionless_windows_path_shims(monkeypatch):
             return "C:/Users/example/AppData/Local/Programs/Microsoft VS Code/bin/code"
         return None
 
-    monkeypatch.setattr("cua.launcher.os.name", "nt")
-    monkeypatch.setattr("cua.launcher.shutil.which", fake_which)
+    monkeypatch.setattr("aria.launcher.os.name", "nt")
+    monkeypatch.setattr("aria.launcher.shutil.which", fake_which)
     monkeypatch.setattr(
-        "cua.launcher.Path.exists",
+        "aria.launcher.Path.exists",
         lambda path: str(path).endswith("Code.exe"),
     )
 
@@ -106,12 +106,12 @@ def test_launch_app_starts_configured_app(monkeypatch):
         calls.append((command, kwargs))
         return FakeProcess()
 
-    monkeypatch.setattr("cua.launcher.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("aria.launcher.subprocess.Popen", fake_popen)
     monkeypatch.setattr(
-        "cua.launcher.resolve_command",
+        "aria.launcher.resolve_command",
         lambda commands: commands[0],
     )
-    monkeypatch.setattr("cua.launcher.resolve_launch_cwd", lambda: "C:/Users/example")
+    monkeypatch.setattr("aria.launcher.resolve_launch_cwd", lambda: "C:/Users/example")
 
     result = launch_app("vscode")
 
@@ -134,11 +134,11 @@ def test_launch_app_can_restart_existing_processes(monkeypatch):
     class FakeProcess:
         pid = 1234
 
-    monkeypatch.setattr("cua.launcher.resolve_command", lambda commands: commands[0])
-    monkeypatch.setattr("cua.launcher.resolve_launch_cwd", lambda: None)
-    monkeypatch.setattr("cua.launcher.terminate_app", lambda app_name: calls.append(("kill", app_name)))
+    monkeypatch.setattr("aria.launcher.resolve_command", lambda commands: commands[0])
+    monkeypatch.setattr("aria.launcher.resolve_launch_cwd", lambda: None)
+    monkeypatch.setattr("aria.launcher.terminate_app", lambda app_name: calls.append(("kill", app_name)))
     monkeypatch.setattr(
-        "cua.launcher.subprocess.Popen",
+        "aria.launcher.subprocess.Popen",
         lambda command, **kwargs: calls.append(("launch", command)) or FakeProcess(),
     )
 
@@ -157,7 +157,7 @@ def test_terminate_app_uses_taskkill_for_known_processes(monkeypatch):
     def fake_run(command, **kwargs):
         calls.append((command, kwargs))
 
-    monkeypatch.setattr("cua.launcher.subprocess.run", fake_run)
+    monkeypatch.setattr("aria.launcher.subprocess.run", fake_run)
 
     terminate_app("notion")
 
@@ -172,7 +172,7 @@ def test_terminate_app_uses_taskkill_for_known_processes(monkeypatch):
 def test_resolve_launch_cwd_prefers_userprofile(monkeypatch):
     monkeypatch.setenv("USERPROFILE", "C:/Users/example")
     monkeypatch.setenv("TEMP", "C:/Temp")
-    monkeypatch.setattr("cua.launcher.Path.exists", lambda path: str(path) == "C:/Users/example")
+    monkeypatch.setattr("aria.launcher.Path.exists", lambda path: str(path) == "C:/Users/example")
 
     assert resolve_launch_cwd() == "C:/Users/example"
 

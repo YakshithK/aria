@@ -11,7 +11,7 @@ Branch: master
 - `.claude/ARCHITECTURE.md` — exact package versions, port allocation
 - `.claude/LIMITATIONS.md` — hard and aspirational limitations
 - `.claude/DEMO.md` — launch demo spec, pre-demo checklist, benchmark table template
-- `~/.gstack/projects/cua/` — design doc, test plan, review log
+- `~/.gstack/projects/aria/` — design doc, test plan, review log
 
 ## NOT in Scope (v1)
 
@@ -56,40 +56,40 @@ Branch: master
 ### BLOCK 0 — Project Scaffold (pre-Step 1)
 
 - [x] **T01** Create `pyproject.toml` with all exact-version dependencies from ARCHITECTURE.md
-- [x] **T02** Create module layout: `cua/__main__.py`, `cua/models.py`, `cua/conductor/`, `cua/backends/`, `cua/planner.py`, `cua/launcher.py`
-- [x] **T03** Write `cua/models.py` — Element, Window, SemanticMap, Action pydantic models
+- [x] **T02** Create module layout: `aria/__main__.py`, `aria/models.py`, `aria/conductor/`, `aria/backends/`, `aria/planner.py`, `aria/launcher.py`
+- [x] **T03** Write `aria/models.py` — Element, Window, SemanticMap, Action pydantic models
 - [x] **T04** Write unit tests for models (test_models.py) — round-trip, literal validation
 - [x] **T05** Create `.github/workflows/tests.yml` — windows-latest, pytest tests/unit/
 - [ ] **T06** Confirm CI green on windows-latest before touching any Win32 code
 
 ### BLOCK 1 — Window Registry (Step 1)
 
-- [x] **T07** Write `cua/conductor/registry.py` — `WindowRegistry.classify(process, class_name)` → backend enum
-- [x] **T08** Write `cua/conductor/registry.py` — `EnumWindows` snapshot → `List[Window]`
+- [x] **T07** Write `aria/conductor/registry.py` — `WindowRegistry.classify(process, class_name)` → backend enum
+- [x] **T08** Write `aria/conductor/registry.py` — `EnumWindows` snapshot → `List[Window]`
 - [x] **T09** Write unit tests for registry classification (test_registry.py)
-- [x] **T10** Wire `python -m cua windows` CLI command → prints registry snapshot as rich table
+- [x] **T10** Wire `python -m aria windows` CLI command → prints registry snapshot as rich table
 - [x] **T11** Manual test: all open windows listed with correct backend
 
 ### BLOCK 2 — CDP Backend (Step 2)
 
-- [x] **T12** Write `cua/backends/cdp.py` — short-lived CDP HTTP/WebSocket client per operation
-- [x] **T13** Write `cua/backends/cdp.py` — `observe()` → `getFullAXTree` → `List[Element]`
+- [x] **T12** Write `aria/backends/cdp.py` — short-lived CDP HTTP/WebSocket client per operation
+- [x] **T13** Write `aria/backends/cdp.py` — `observe()` → `getFullAXTree` → `List[Element]`
 - [x] **T14** Write SemanticMap filter: depth ≤ 8, count ≤ 500, skip nameless+actionless nodes
 - [x] **T15** Write active tab selection: windowId match → title fallback → None (not first-result)
 - [x] **T16** Write unit tests: CDP parser, filter, tab selection, port collision (test_cdp_parser.py)
-- [x] **T17** Wire `python -m cua observe --app chrome` → prints SemanticMap JSON
+- [x] **T17** Wire `python -m aria observe --app chrome` → prints SemanticMap JSON
 - [x] **T17a** Add DOM fallback for sparse AX trees (links/buttons/inputs as `dom_` Elements)
 
 ### BLOCK 3 — Planner + 3 Tools (Step 3)
 
-- [x] **T18** Write `cua/planner.py` — `run_task()` with OpenAI-compatible history format (see ARCHITECTURE.md)
+- [x] **T18** Write `aria/planner.py` — `run_task()` with OpenAI-compatible history format (see ARCHITECTURE.md)
 - [x] **T19** Define initial tool schemas in OpenAI-compatible function format:
   `focus_window`, `observe_window`, `set_value`, `navigate`
 - [x] **T20** Use executor for planner API calls; conductor uses worker threads for backend calls
 - [x] **T21** Add `max_turns=50`, `timeout=300s` guards
 - [x] **T22** Init client: `OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")`; ensure `ollama serve` is running
 - [x] **T23** Write unit tests: tool schema, history format, max_turns guard, timeout guard (test_planner.py)
-- [x] **T24** Manual test: `python -m cua run "navigate Chrome to https://www.google.com/search?q=hello"` works
+- [x] **T24** Manual test: `python -m aria run "navigate Chrome to https://www.google.com/search?q=hello"` works
 - [x] **T24a** Add planner stall guard for repeated identical observations
 
 ### BLOCK 4 — Full Action Executor (Step 4)
@@ -97,12 +97,12 @@ Branch: master
 - [x] **T25** Add remaining tool schemas: `invoke`, `type`, `scroll`, `key_combo`, `wait_for`
 - [x] **T26** Write action executor dispatch: Action.type → CDP method
 - [x] **T27** Write `force_foreground` with retry (see ARCHITECTURE.md)
-- [x] **T28** Manual test: `python -m cua run "click first search result"` works
+- [x] **T28** Manual test: `python -m aria run "click first search result"` works
 - [x] **T28a** DOM fallback `invoke` and `set_value` work on sparse Google pages
 
 ### BLOCK 5 — Electron Support (Step 5)
 
-- [x] **T29** Write `cua/launcher.py` — wraps app launch with `--remote-debugging-port=<PORT>` flag
+- [x] **T29** Write `aria/launcher.py` — wraps app launch with `--remote-debugging-port=<PORT>` flag
 - [x] **T30** Test VS Code CDP: launch → observe → SemanticMap with file explorer elements
 - [x] **T31** Test Discord semantic map: launch → verify message content, channel names, server names visible via AX or DOM fallback
 - [x] **T32** Test Discord virtual list scroll loop: scroll → observe → scroll → confirm all 10+ messages
@@ -119,10 +119,10 @@ Branch: master
 
 ### BLOCK 7 — UIA Backend (Step 7, post-launch)
 
-- [ ] **T40** Write `cua/backends/uia.py` — `UIABackend.observe()` → `List[Element]`
+- [ ] **T40** Write `aria/backends/uia.py` — `UIABackend.observe()` → `List[Element]`
 - [ ] **T41** Run 10-task matrix against Notepad and File Explorer
 - [ ] **T42** If Office UIA reliable in testing, add to v2 supported app list
-- [ ] **T43** Wire `python -m cua observe --app notepad` → prints SemanticMap JSON
+- [ ] **T43** Wire `python -m aria observe --app notepad` → prints SemanticMap JSON
 
 ## Parallelization Strategy (Worktrees)
 

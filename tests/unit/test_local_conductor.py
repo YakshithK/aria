@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from cua.conductor.local import ForegroundError, LocalConductor, Win32ForegroundController
-from cua.models import Action
+from aria.conductor.local import ForegroundError, LocalConductor, Win32ForegroundController
+from aria.models import Action
 
 
 def test_local_conductor_routes_set_value_to_cdp_backend():
@@ -79,7 +79,7 @@ def test_win32_foreground_controller_retries_thread_attach(monkeypatch):
     )
     win32api = types.SimpleNamespace(GetCurrentThreadId=lambda: 5000)
 
-    monkeypatch.setattr("cua.conductor.local.sys.platform", "win32")
+    monkeypatch.setattr("aria.conductor.local.sys.platform", "win32")
     monkeypatch.setitem(sys.modules, "win32gui", win32gui)
     monkeypatch.setitem(sys.modules, "win32process", win32process)
     monkeypatch.setitem(sys.modules, "win32api", win32api)
@@ -98,7 +98,7 @@ def test_win32_foreground_controller_retries_thread_attach(monkeypatch):
 
 
 def test_win32_foreground_controller_rejects_non_windows(monkeypatch):
-    monkeypatch.setattr("cua.conductor.local.sys.platform", "linux")
+    monkeypatch.setattr("aria.conductor.local.sys.platform", "linux")
 
     with pytest.raises(ForegroundError, match="native Windows Python"):
         Win32ForegroundController().force_foreground(200)
@@ -127,7 +127,7 @@ def test_local_conductor_runs_observe_in_worker_thread():
 
     conductor = LocalConductor(cdp_backend=FakeBackend())
 
-    with patch("cua.conductor.local.asyncio.to_thread") as to_thread:
+    with patch("aria.conductor.local.asyncio.to_thread") as to_thread:
         async def run_in_place(func, *args):
             return func(*args)
 
@@ -146,7 +146,7 @@ def test_local_conductor_runs_set_value_in_worker_thread():
 
     conductor = LocalConductor(cdp_backend=FakeBackend())
 
-    with patch("cua.conductor.local.asyncio.to_thread") as to_thread:
+    with patch("aria.conductor.local.asyncio.to_thread") as to_thread:
         async def run_in_place(func, *args):
             return func(*args)
 

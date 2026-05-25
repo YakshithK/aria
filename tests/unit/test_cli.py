@@ -1,13 +1,13 @@
 from typer.testing import CliRunner
 
-from cua.__main__ import app
-from cua.conductor.registry import WindowInfo
-from cua.models import Element, SemanticMap, Window
+from aria.__main__ import app
+from aria.conductor.registry import WindowInfo
+from aria.models import Element, SemanticMap, Window
 
 
 def test_windows_command_prints_registry_table(monkeypatch):
     monkeypatch.setattr(
-        "cua.__main__.WindowRegistry.snapshot",
+        "aria.__main__.WindowRegistry.snapshot",
         lambda self: [
             WindowInfo(
                 hwnd=100,
@@ -30,7 +30,7 @@ def test_windows_command_prints_registry_table(monkeypatch):
 
 def test_windows_command_reports_snapshot_errors(monkeypatch):
     monkeypatch.setattr(
-        "cua.__main__.WindowRegistry.snapshot",
+        "aria.__main__.WindowRegistry.snapshot",
         lambda self: (_ for _ in ()).throw(RuntimeError("not available")),
     )
 
@@ -80,7 +80,7 @@ def test_observe_command_prints_semantic_map_json(monkeypatch):
         def observe(self):
             return semantic_map
 
-    monkeypatch.setattr("cua.__main__.CDPBackend", FakeBackend)
+    monkeypatch.setattr("aria.__main__.CDPBackend", FakeBackend)
 
     result = CliRunner().invoke(app, ["observe", "--app", "chrome"])
 
@@ -117,7 +117,7 @@ def test_observe_command_supports_vscode_port(monkeypatch):
         def observe(self):
             return semantic_map
 
-    monkeypatch.setattr("cua.__main__.CDPBackend", FakeBackend)
+    monkeypatch.setattr("aria.__main__.CDPBackend", FakeBackend)
 
     result = CliRunner().invoke(app, ["observe", "--app", "vscode"])
 
@@ -136,7 +136,7 @@ def test_observe_command_rejects_unsupported_app():
 
 def test_launch_command_starts_supported_app(monkeypatch):
     monkeypatch.setattr(
-        "cua.__main__.launch_app",
+        "aria.__main__.launch_app",
         lambda app_name, restart=False: {
             "ok": True,
             "app": "VS Code",
@@ -161,7 +161,7 @@ def test_run_command_prints_planner_result(monkeypatch):
             assert task == "do it"
             return {"status": "complete", "turns": 1}
 
-    monkeypatch.setattr("cua.__main__.OllamaPlanner", FakePlanner)
+    monkeypatch.setattr("aria.__main__.OllamaPlanner", FakePlanner)
 
     result = CliRunner().invoke(app, ["run", "do it"])
 

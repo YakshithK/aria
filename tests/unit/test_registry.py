@@ -1,6 +1,6 @@
 import pytest
 
-from cua.conductor.registry import UnsupportedPlatformError, WindowInfo, WindowRegistry
+from aria.conductor.registry import UnsupportedPlatformError, WindowInfo, WindowRegistry
 
 
 @pytest.mark.parametrize(

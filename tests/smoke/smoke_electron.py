@@ -4,8 +4,8 @@ import argparse
 import sys
 import time
 
-from cua.backends.cdp import CDPBackend
-from cua.launcher import LAUNCH_SPECS, launch_app
+from aria.backends.cdp import CDPBackend
+from aria.launcher import LAUNCH_SPECS, launch_app
 
 
 def named_elements_from_backend(backend: CDPBackend) -> list[str]:

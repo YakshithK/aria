@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from cua.models import Action, Element, SemanticMap, Window
+from aria.models import Action, Element, SemanticMap, Window
 
 
 def test_element_id_prefix_accepts_uia_and_cdp_ids():

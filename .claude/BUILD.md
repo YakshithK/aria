@@ -9,7 +9,7 @@ step's artifact works.
 
 ## Step 1: Window Registry
 
-**Artifact:** `python -m cua windows` prints all open top-level windows with hwnd,
+**Artifact:** `python -m aria windows` prints all open top-level windows with hwnd,
 pid, process name, title, class name, and classified backend (cdp/uia/unsupported).
 
 **What to build:**
@@ -27,7 +27,7 @@ with correct backend classification.
 
 ## Step 2: CDP Backend for Chrome
 
-**Artifact:** `python -m cua observe --app chrome` prints a normalized SemanticMap
+**Artifact:** `python -m aria observe --app chrome` prints a normalized SemanticMap
 of the active Chrome tab as JSON.
 
 **What to build:**
@@ -49,7 +49,7 @@ only `RootWebArea` via AX, DOM fallback should still expose `dom_` elements.
 
 ## Step 3: LLM Planner (3 Tools)
 
-**Artifact:** `python -m cua run "navigate Chrome to https://www.google.com/search?q=hello"` completes
+**Artifact:** `python -m aria run "navigate Chrome to https://www.google.com/search?q=hello"` completes
 the task using gemma4:31b-cloud via Ollama as the planner.
 
 **What to build:**
@@ -68,7 +68,7 @@ Logs show token count and wall-clock time.
 
 ## Step 4: Full Action Executor
 
-**Artifact:** `python -m cua run "click the first search result on this page"` works.
+**Artifact:** `python -m aria run "click the first search result on this page"` works.
 
 **What to build:**
 - `invoke` action: `Runtime.callFunctionOn` with `.click()` on CDP nodeId
@@ -87,8 +87,8 @@ scroll the page, hit Escape. All actions complete without pixel simulation.
 
 ## Step 5: Electron Support
 
-**Artifact:** `python -m cua launch vscode` opens VS Code with debug port.
-`python -m cua observe --app vscode` prints a SemanticMap of the VS Code window.
+**Artifact:** `python -m aria launch vscode` opens VS Code with debug port.
+`python -m aria observe --app vscode` prints a SemanticMap of the VS Code window.
 
 **What to build:**
 - Launcher command: wraps common apps with `--remote-debugging-port=<port>`
@@ -97,8 +97,8 @@ scroll the page, hit Escape. All actions complete without pixel simulation.
 - Discord CDP semantic normalization (test: can you see channel names and messages?)
 - Notion CDP semantic normalization (test: can you see page blocks?)
 
-**Proof it works (VS Code):** `cua run "open the terminal in VS Code"` works.
-**Proof it works (Discord):** `cua observe --app discord` shows server names, channel
+**Proof it works (VS Code):** `aria run "open the terminal in VS Code"` works.
+**Proof it works (Discord):** `aria observe --app discord` shows server names, channel
 names, and last 5 messages in the active channel.
 
 **Risk checkpoint:** If Discord rejects --remote-debugging-port on the current build,
@@ -129,8 +129,8 @@ Same task: read #announcements from 3 Discord servers, summarize, paste into Not
 
 ## Step 7: UIA Backend for Simple Win32 (Post-Launch)
 
-**Artifact:** `python -m cua observe --app notepad` prints a SemanticMap via UIA.
-`python -m cua run "type hello into Notepad"` works via UIA ValuePattern.
+**Artifact:** `python -m aria observe --app notepad` prints a SemanticMap via UIA.
+`python -m aria run "type hello into Notepad"` works via UIA ValuePattern.
 
 **What to build:**
 - UIA control view walker (skip raw view, skip IsOffscreen=true, max depth limit)

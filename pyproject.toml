@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cua"
+name = "aria"
 version = "0.1.0"
 description = "Windows semantic computer-use agent using CDP and UIA."
 readme = "CLAUDE.md"
@@ -30,10 +30,10 @@ dev = [
 ]
 
 [project.scripts]
-cua = "cua.__main__:app"
+aria = "aria.__main__:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["cua"]
+packages = ["aria"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
