@@ -153,6 +153,8 @@ def test_launch_command_starts_supported_app(monkeypatch):
 
 
 def test_run_command_prints_planner_result(monkeypatch):
+    from aria.backends.cdp import CDPBackend
+
     class FakePlanner:
         def __init__(self, conductor):
             self.conductor = conductor
@@ -162,8 +164,38 @@ def test_run_command_prints_planner_result(monkeypatch):
             return {"status": "complete", "turns": 1}
 
     monkeypatch.setattr("aria.__main__.OllamaPlanner", FakePlanner)
+    monkeypatch.setattr(
+        "aria.__main__._discover_backends",
+        lambda requested: [CDPBackend(port=9222, app="Chrome")],
+    )
 
     result = CliRunner().invoke(app, ["run", "do it"])
 
     assert result.exit_code == 0
     assert '"status": "complete"' in result.stdout
+
+
+def test_run_command_connects_to_explicit_apps(monkeypatch):
+    from aria.backends.cdp import CDPBackend
+
+    connected_backends = []
+
+    class FakePlanner:
+        def __init__(self, conductor):
+            connected_backends.extend(conductor.cdp_backends)
+
+        async def run_task(self, task):
+            return {"ok": True}
+
+    monkeypatch.setattr("aria.__main__.OllamaPlanner", FakePlanner)
+    monkeypatch.setattr(
+        "aria.__main__._discover_backends",
+        lambda requested: [CDPBackend(port=9224, app="Discord"), CDPBackend(port=9225, app="Notion")],
+    )
+
+    result = CliRunner().invoke(app, ["run", "--app", "discord", "--app", "notion", "do it"])
+
+    assert result.exit_code == 0
+    assert len(connected_backends) == 2
+    assert connected_backends[0].port == 9224
+    assert connected_backends[1].port == 9225

@@ -1,5 +1,6 @@
 import asyncio
 
+import httpx
 from rich.console import Console
 from rich.table import Table
 import typer
@@ -80,11 +81,46 @@ def launch(app_name: str, restart: bool = typer.Option(False, "--restart")) -> N
     console.print_json(data=result)
 
 
+def _discover_backends(requested: list[str]) -> list[CDPBackend]:
+    """Return CDPBackend instances for the requested apps, or auto-discover all live ports."""
+    if requested:
+        backends = []
+        for name in requested:
+            normalized = name.lower()
+            port = CDP_PORTS.get(normalized)
+            if port is None:
+                console.print(f"[red]Unsupported app:[/red] {name}")
+                raise typer.Exit(1)
+            backends.append(CDPBackend(port=port, app=APP_NAMES[normalized]))
+        return backends
+
+    # Auto-discover: include every port that responds to /json/list
+    backends = []
+    for name, port in CDP_PORTS.items():
+        try:
+            httpx.get(f"http://127.0.0.1:{port}/json/list", timeout=1.0).raise_for_status()
+            backends.append(CDPBackend(port=port, app=APP_NAMES[name]))
+        except Exception:
+            pass
+    if not backends:
+        console.print("[red]Error:[/red] No running CDP apps found. Launch apps first with `aria launch <app>`.")
+        raise typer.Exit(1)
+    return backends
+
+
 @app.command()
-def run(task: str) -> None:
+def run(
+    task: str,
+    apps: list[str] = typer.Option([], "--app", help="App(s) to connect (e.g. --app discord --app notion). Auto-discovers all live ports if omitted."),
+) -> None:
     """Run a task through the Ollama planner."""
     try:
-        result = asyncio.run(OllamaPlanner(conductor=LocalConductor()).run_task(task))
+        backends = _discover_backends(apps)
+        app_names = ", ".join(b.app for b in backends)
+        console.print(f"[dim]Connecting to: {app_names}[/dim]")
+        result = asyncio.run(OllamaPlanner(conductor=LocalConductor(cdp_backends=backends)).run_task(task))
+    except typer.Exit:
+        raise
     except Exception as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from exc
