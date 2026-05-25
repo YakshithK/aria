@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 
 from aria.conductor.registry import UnsupportedPlatformError, WindowInfo, WindowRegistry
@@ -115,6 +117,7 @@ def test_snapshot_skips_invisible_provider_rows():
     assert registry.snapshot() == []
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="tests non-Windows guard; skip when running on Windows")
 def test_default_snapshot_raises_clear_error_off_windows():
     with pytest.raises(UnsupportedPlatformError, match="native Windows"):
         WindowRegistry().snapshot()

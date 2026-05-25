@@ -1,4 +1,5 @@
 import pytest
+from pathlib import Path
 
 from aria.launcher import (
     LAUNCH_SPECS,
@@ -36,6 +37,7 @@ def test_launch_specs_have_stable_ports(app_name, app, port):
 
 def test_resolve_command_uses_first_available_candidate(monkeypatch):
     monkeypatch.setattr("aria.launcher.shutil.which", lambda executable: None)
+    monkeypatch.setattr("aria.launcher.os.path.expandvars", lambda x: x)
     monkeypatch.setattr(
         "aria.launcher.Path.exists",
         lambda path: str(path).endswith("Code.exe"),
@@ -74,6 +76,7 @@ def test_resolve_command_skips_extensionless_windows_path_shims(monkeypatch):
         return None
 
     monkeypatch.setattr("aria.launcher.os.name", "nt")
+    monkeypatch.setattr("aria.launcher.os.path.expandvars", lambda x: x)
     monkeypatch.setattr("aria.launcher.shutil.which", fake_which)
     monkeypatch.setattr(
         "aria.launcher.Path.exists",
@@ -172,7 +175,10 @@ def test_terminate_app_uses_taskkill_for_known_processes(monkeypatch):
 def test_resolve_launch_cwd_prefers_userprofile(monkeypatch):
     monkeypatch.setenv("USERPROFILE", "C:/Users/example")
     monkeypatch.setenv("TEMP", "C:/Temp")
-    monkeypatch.setattr("aria.launcher.Path.exists", lambda path: str(path) == "C:/Users/example")
+    monkeypatch.setattr(
+        "aria.launcher.Path.exists",
+        lambda path: path == Path("C:/Users/example"),
+    )
 
     assert resolve_launch_cwd() == "C:/Users/example"
 
