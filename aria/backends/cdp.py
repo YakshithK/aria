@@ -66,6 +66,14 @@ class CDPClient(Protocol):
     def insert_text(self, target: dict[str, Any], text: str) -> Any:
         ...
 
+    def insert_text_dom(
+        self,
+        target: dict[str, Any],
+        dom_target: dict[str, Any],
+        text: str,
+    ) -> Any:
+        ...
+
     def navigate(self, target: dict[str, Any], url: str) -> Any:
         ...
 
@@ -194,6 +202,18 @@ def filter_elements(
     return filtered
 
 
+_CHROME_TITLES = {"tab bar", "new tab", "devtools", "extensions"}
+
+
+_BLANK_URL_PATTERNS = ("/blank?", "/blank#", "about:blank")
+
+
+def _is_placeholder_target(target: dict[str, Any]) -> bool:
+    """Return True for startup/restore/blank page targets that have no real content."""
+    url = str(target.get("url", ""))
+    return any(pat in url for pat in _BLANK_URL_PATTERNS)
+
+
 def select_active_target(
     targets: list[dict[str, Any]],
     *,
@@ -210,24 +230,67 @@ def select_active_target(
         for target in pages:
             if lower_title in str(target.get("title", "")).lower():
                 return target
-    if window_id is None and title is None:
-        usable_pages = [
-            target for target in pages if target.get("webSocketDebuggerUrl")
-        ]
-        named_pages = [
-            target for target in usable_pages if str(target.get("title", "")).strip()
-        ]
-        if named_pages:
-            return named_pages[0]
-        if usable_pages:
-            return usable_pages[0]
+    usable_pages = [target for target in pages if target.get("webSocketDebuggerUrl")]
+    content_pages = [
+        target for target in usable_pages
+        if str(target.get("title", "")).strip().lower() not in _CHROME_TITLES
+    ]
+    candidate_pool = content_pages or usable_pages
+    # Prefer non-placeholder targets; fall back to placeholders only if nothing else available
+    real_pages = [t for t in candidate_pool if not _is_placeholder_target(t)]
+    named_pages = [
+        target for target in (real_pages or candidate_pool)
+        if str(target.get("title", "")).strip()
+    ]
+    if named_pages:
+        return named_pages[0]
+    if real_pages:
+        return real_pages[0]
+    if usable_pages:
+        return usable_pages[0]
     return None
 
 
+def select_targets_ranked(
+    targets: list[dict[str, Any]],
+    *,
+    title: str | None,
+) -> list[dict[str, Any]]:
+    """Return all candidate page targets ordered best-first (for fallback probing).
+
+    Ordering priority:
+      1. Real (non-placeholder) pages whose title matches the app name
+      2. Other real pages
+      3. Placeholder pages (blank/restore URLs) as a last resort
+    """
+    pages = [t for t in targets if t.get("type") == "page" and t.get("webSocketDebuggerUrl")]
+    content_pages = [
+        t for t in pages
+        if str(t.get("title", "")).strip().lower() not in _CHROME_TITLES
+    ]
+    pool = content_pages or pages
+    real = [t for t in pool if not _is_placeholder_target(t)]
+    placeholder = [t for t in pool if _is_placeholder_target(t)]
+
+    if title:
+        lower = title.lower()
+        real_match = [t for t in real if lower in str(t.get("title", "")).lower()]
+        real_other = [t for t in real if lower not in str(t.get("title", "")).lower()]
+        return [*real_match, *real_other, *placeholder]
+
+    return [*real, *placeholder]
+
+
 class HttpWebSocketCDPClient:
-    def __init__(self, port: int, host: str = "127.0.0.1") -> None:
+    def __init__(
+        self,
+        port: int,
+        host: str = "127.0.0.1",
+        response_timeout: float = 5.0,
+    ) -> None:
         self.port = port
         self.host = host
+        self.response_timeout = response_timeout
 
     def list_targets(self) -> list[dict[str, Any]]:
         url = f"http://{self.host}:{self.port}/json/list"
@@ -307,6 +370,17 @@ class HttpWebSocketCDPClient:
             raise CDPNotAvailableError("Selected CDP target has no WebSocket URL.")
         return asyncio.run(self._insert_text(websocket_url, text))
 
+    def insert_text_dom(
+        self,
+        target: dict[str, Any],
+        dom_target: dict[str, Any],
+        text: str,
+    ) -> Any:
+        websocket_url = target.get("webSocketDebuggerUrl")
+        if not websocket_url:
+            raise CDPNotAvailableError("Selected CDP target has no WebSocket URL.")
+        return asyncio.run(self._insert_text_dom(websocket_url, dom_target, text))
+
     def navigate(self, target: dict[str, Any], url: str) -> Any:
         websocket_url = target.get("webSocketDebuggerUrl")
         if not websocket_url:
@@ -314,7 +388,7 @@ class HttpWebSocketCDPClient:
         return asyncio.run(self._navigate(websocket_url, url))
 
     async def _get_full_ax_tree(self, websocket_url: str) -> list[dict[str, Any]]:
-        async with websockets.connect(websocket_url, open_timeout=5) as websocket:
+        async with websockets.connect(websocket_url, open_timeout=5, max_size=None) as websocket:
             await websocket.send(json.dumps({"id": 1, "method": "Accessibility.enable"}))
             await self._recv_response(websocket, 1)
             last_nodes: list[dict[str, Any]] = []
@@ -333,7 +407,7 @@ class HttpWebSocketCDPClient:
             return last_nodes
 
     async def _get_dom_interactives(self, websocket_url: str) -> list[dict[str, Any]]:
-        async with websockets.connect(websocket_url, open_timeout=5) as websocket:
+        async with websockets.connect(websocket_url, open_timeout=5, max_size=None) as websocket:
             await websocket.send(
                 json.dumps(
                     {
@@ -343,12 +417,17 @@ class HttpWebSocketCDPClient:
                             "expression": _DOM_INTERACTIVE_SCRIPT,
                             "returnByValue": True,
                             "awaitPromise": True,
+                            "allowUnsafeEvalBlockedByCSP": True,
                         },
                     }
                 )
             )
             raw = await self._recv_response(websocket, 1)
-            return raw.get("result", {}).get("result", {}).get("value", [])
+            result_envelope = raw.get("result", {})
+            if "exceptionDetails" in result_envelope or "error" in raw:
+                return []
+            items = result_envelope.get("result", {}).get("value", [])
+            return items if isinstance(items, list) else []
 
     async def _set_value(
         self,
@@ -356,7 +435,7 @@ class HttpWebSocketCDPClient:
         backend_node_id: int,
         text: str,
     ) -> Any:
-        async with websockets.connect(websocket_url, open_timeout=5) as websocket:
+        async with websockets.connect(websocket_url, open_timeout=5, max_size=None) as websocket:
             await websocket.send(
                 json.dumps(
                     {
@@ -366,7 +445,7 @@ class HttpWebSocketCDPClient:
                     }
                 )
             )
-            resolved = json.loads(await websocket.recv())
+            resolved = await self._recv_json(websocket)
             if "error" in resolved:
                 raise CDPError(str(resolved["error"]))
             object_id = resolved["result"]["object"]["objectId"]
@@ -393,7 +472,7 @@ class HttpWebSocketCDPClient:
                     }
                 )
             )
-            result = json.loads(await websocket.recv())
+            result = await self._recv_json(websocket)
             if "error" in result:
                 raise CDPError(str(result["error"]))
             return {"ok": True}
@@ -404,7 +483,7 @@ class HttpWebSocketCDPClient:
         dom_target: dict[str, Any],
         text: str,
     ) -> Any:
-        async with websockets.connect(websocket_url, open_timeout=5) as websocket:
+        async with websockets.connect(websocket_url, open_timeout=5, max_size=None) as websocket:
             await websocket.send(
                 json.dumps(
                     {
@@ -414,9 +493,21 @@ class HttpWebSocketCDPClient:
                             "expression": _dom_target_script(
                                 dom_target,
                                 (
-                                    "if ('value' in el) { el.value = payload.text; } "
-                                    "else { el.textContent = payload.text; } "
-                                    "el.dispatchEvent(new Event('input', { bubbles: true }));"
+                                    "const setNativeValue = (node, value) => {"
+                                    "const proto = node instanceof HTMLTextAreaElement ? "
+                                    "HTMLTextAreaElement.prototype : HTMLInputElement.prototype;"
+                                    "const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');"
+                                    "if (descriptor && descriptor.set) descriptor.set.call(node, value);"
+                                    "else node.value = value;"
+                                    "};"
+                                    "if ('value' in el) {"
+                                    "setNativeValue(el, payload.text);"
+                                    "el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertText', data: payload.text }));"
+                                    "el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: payload.text }));"
+                                    "} else {"
+                                    "el.textContent = payload.text;"
+                                    "el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: payload.text }));"
+                                    "}"
                                     "el.dispatchEvent(new Event('change', { bubbles: true }));"
                                 ),
                                 {"text": text},
@@ -433,7 +524,7 @@ class HttpWebSocketCDPClient:
             return {"ok": True}
 
     async def _navigate(self, websocket_url: str, url: str) -> Any:
-        async with websockets.connect(websocket_url, open_timeout=5) as websocket:
+        async with websockets.connect(websocket_url, open_timeout=5, max_size=None) as websocket:
             await websocket.send(
                 json.dumps(
                     {
@@ -443,29 +534,163 @@ class HttpWebSocketCDPClient:
                     }
                 )
             )
-            result = json.loads(await websocket.recv())
+            result = await self._recv_json(websocket)
             if "error" in result:
                 raise CDPError(str(result["error"]))
             return {"ok": True}
 
     async def _insert_text(self, websocket_url: str, text: str) -> Any:
-        async with websockets.connect(websocket_url, open_timeout=5) as websocket:
+        async with websockets.connect(websocket_url, open_timeout=5, max_size=None) as websocket:
+            # Input.insertText silently discards text when nothing editable is focused.
+            # Check first so the caller gets a real error instead of a false ok.
             await websocket.send(
                 json.dumps(
                     {
                         "id": 1,
+                        "method": "Runtime.evaluate",
+                        "params": {
+                            "expression": (
+                                "(() => {"
+                                "const a = document.activeElement;"
+                                "return !!(a && a !== document.body && "
+                                "a !== document.documentElement && "
+                                "(a.isContentEditable || 'value' in a));"
+                                "})()"
+                            ),
+                            "returnByValue": True,
+                        },
+                    }
+                )
+            )
+            focus_check = await self._recv_response(websocket, 1)
+            is_focused = focus_check.get("result", {}).get("result", {}).get("value", False)
+            if not is_focused:
+                return {
+                    "ok": False,
+                    "error": (
+                        "No editable element is focused in this page. "
+                        "Call invoke on a text block element first to place the cursor, "
+                        "then call type."
+                    ),
+                }
+            await websocket.send(
+                json.dumps(
+                    {
+                        "id": 2,
                         "method": "Input.insertText",
                         "params": {"text": text},
                     }
                 )
             )
-            result = json.loads(await websocket.recv())
-            if "error" in result:
-                raise CDPError(str(result["error"]))
+            await self._recv_response(websocket, 2)
+            return {"ok": True}
+
+    async def _insert_text_dom(
+        self,
+        websocket_url: str,
+        dom_target: dict[str, Any],
+        text: str,
+    ) -> Any:
+        async with websockets.connect(websocket_url, open_timeout=5, max_size=None) as websocket:
+            if "\n" in text:
+                await websocket.send(
+                    json.dumps(
+                        {
+                            "id": 1,
+                            "method": "Runtime.evaluate",
+                            "params": {
+                                "expression": _dom_target_script(
+                                    dom_target,
+                                    (
+                                        "if (!(el.isContentEditable || 'value' in el)) return false;"
+                                        "if (el.isContentEditable) {"
+                                        "const range = document.createRange();"
+                                        "range.selectNodeContents(el);"
+                                        "range.collapse(false);"
+                                        "const selection = window.getSelection();"
+                                        "selection.removeAllRanges();"
+                                        "selection.addRange(range);"
+                                        "} else if (typeof el.setSelectionRange === 'function') {"
+                                        "const end = String(el.value || '').length;"
+                                        "el.setSelectionRange(end, end);"
+                                        "}"
+                                        "const data = new DataTransfer();"
+                                        "data.setData('text/plain', payload.text);"
+                                        "const paste = new ClipboardEvent('paste', {"
+                                        "bubbles: true,"
+                                        "cancelable: true,"
+                                        "clipboardData: data"
+                                        "});"
+                                        "const handled = !el.dispatchEvent(paste);"
+                                        "if (!handled) {"
+                                        "document.execCommand('insertText', false, payload.text);"
+                                        "}"
+                                    ),
+                                    {"text": text},
+                                ),
+                                "returnByValue": True,
+                                "awaitPromise": True,
+                            },
+                        }
+                    )
+                )
+                pasted = await self._recv_response(websocket, 1)
+                if pasted.get("result", {}).get("result", {}).get("value") is not True:
+                    return {
+                        "ok": False,
+                        "error": f"DOM multiline paste failed: {dom_target}",
+                    }
+                return {"ok": True}
+
+            await websocket.send(
+                json.dumps(
+                    {
+                        "id": 1,
+                        "method": "Runtime.evaluate",
+                        "params": {
+                            "expression": _dom_target_script(
+                                dom_target,
+                                (
+                                    "if (!(el.isContentEditable || 'value' in el)) return false;"
+                                    "if (el.isContentEditable) {"
+                                    "const range = document.createRange();"
+                                    "range.selectNodeContents(el);"
+                                    "range.collapse(false);"
+                                    "const selection = window.getSelection();"
+                                    "selection.removeAllRanges();"
+                                    "selection.addRange(range);"
+                                    "} else if (typeof el.setSelectionRange === 'function') {"
+                                    "const end = String(el.value || '').length;"
+                                    "el.setSelectionRange(end, end);"
+                                    "}"
+                                ),
+                            ),
+                            "returnByValue": True,
+                            "awaitPromise": True,
+                        },
+                    }
+                )
+            )
+            focused = await self._recv_response(websocket, 1)
+            if focused.get("result", {}).get("result", {}).get("value") is not True:
+                return {
+                    "ok": False,
+                    "error": f"DOM element is not editable or could not be focused: {dom_target}",
+                }
+            await websocket.send(
+                json.dumps(
+                    {
+                        "id": 2,
+                        "method": "Input.insertText",
+                        "params": {"text": text},
+                    }
+                )
+            )
+            await self._recv_response(websocket, 2)
             return {"ok": True}
 
     async def _invoke(self, websocket_url: str, backend_node_id: int) -> Any:
-        async with websockets.connect(websocket_url, open_timeout=5) as websocket:
+        async with websockets.connect(websocket_url, open_timeout=5, max_size=None) as websocket:
             object_id = await self._resolve_object_id(websocket, backend_node_id)
             await websocket.send(
                 json.dumps(
@@ -482,13 +707,13 @@ class HttpWebSocketCDPClient:
                     }
                 )
             )
-            result = json.loads(await websocket.recv())
+            result = await self._recv_json(websocket)
             if "error" in result:
                 raise CDPError(str(result["error"]))
             return {"ok": True}
 
     async def _invoke_dom(self, websocket_url: str, dom_target: dict[str, Any]) -> Any:
-        async with websockets.connect(websocket_url, open_timeout=5) as websocket:
+        async with websockets.connect(websocket_url, open_timeout=5, max_size=None) as websocket:
             await websocket.send(
                 json.dumps(
                     {
@@ -520,7 +745,7 @@ class HttpWebSocketCDPClient:
         delta_x: int,
         delta_y: int,
     ) -> Any:
-        async with websockets.connect(websocket_url, open_timeout=5) as websocket:
+        async with websockets.connect(websocket_url, open_timeout=5, max_size=None) as websocket:
             await websocket.send(
                 json.dumps(
                     {
@@ -536,17 +761,18 @@ class HttpWebSocketCDPClient:
                     }
                 )
             )
-            result = json.loads(await websocket.recv())
+            result = await self._recv_json(websocket)
             if "error" in result:
                 raise CDPError(str(result["error"]))
             return {"ok": True}
 
     async def _key_combo(self, websocket_url: str, keys: list[str]) -> Any:
-        async with websockets.connect(websocket_url, open_timeout=5) as websocket:
-            events = [(key, "keyDown") for key in keys] + [
-                (key, "keyUp") for key in reversed(keys)
+        normalized_keys = [_normalize_key(key) for key in keys]
+        async with websockets.connect(websocket_url, open_timeout=5, max_size=None) as websocket:
+            events = [(key, "keyDown") for key in normalized_keys] + [
+                (key, "keyUp") for key in reversed(normalized_keys)
             ]
-            modifiers = _modifiers_for_keys(keys)
+            modifiers = _modifiers_for_keys(normalized_keys)
             for index, (key, event_type) in enumerate(events, start=1):
                 await websocket.send(
                     json.dumps(
@@ -564,7 +790,7 @@ class HttpWebSocketCDPClient:
                         }
                     )
                 )
-                result = json.loads(await websocket.recv())
+                result = await self._recv_json(websocket)
                 if "error" in result:
                     raise CDPError(str(result["error"]))
             return {"ok": True}
@@ -579,19 +805,32 @@ class HttpWebSocketCDPClient:
                 }
             )
         )
-        resolved = json.loads(await websocket.recv())
+        resolved = await self._recv_json(websocket)
         if "error" in resolved:
             raise CDPError(str(resolved["error"]))
         return str(resolved["result"]["object"]["objectId"])
 
     async def _recv_response(self, websocket: Any, request_id: int) -> dict[str, Any]:
         while True:
-            raw = json.loads(await websocket.recv())
+            raw = await self._recv_json(websocket)
             if raw.get("id") != request_id:
                 continue
             if "error" in raw:
                 raise CDPError(str(raw["error"]))
             return raw
+
+    async def _recv_json(self, websocket: Any) -> dict[str, Any]:
+        try:
+            message = await asyncio.wait_for(
+                websocket.recv(),
+                timeout=self.response_timeout,
+            )
+        except TimeoutError as exc:
+            raise CDPError(
+                f"Timed out waiting for CDP WebSocket response after "
+                f"{self.response_timeout:.1f}s."
+            ) from exc
+        return json.loads(message)
 
 
 class CDPBackend:
@@ -609,17 +848,7 @@ class CDPBackend:
         self._dom_targets: dict[str, dict[str, Any]] = {}
         self._active_target_id: str | None = None
 
-    def observe(
-        self,
-        *,
-        window_id: int | None = None,
-        title: str | None = None,
-    ) -> SemanticMap:
-        targets = self.client.list_targets()
-        target = select_active_target(targets, window_id=window_id, title=title)
-        if target is None:
-            raise CDPError("No matching active CDP page target found.")
-
+    def _observe_target(self, target: dict[str, Any]) -> SemanticMap:
         raw_nodes = self.client.get_full_ax_tree(target)
         target_id = str(target["id"])
         self._active_target_id = target_id
@@ -628,21 +857,26 @@ class CDPBackend:
         elements = parse_ax_tree(raw_nodes, target_id=target_id)
         root_ids = _root_element_ids(elements)
         filtered = filter_elements(elements, root_ids=root_ids)
-        if _semantic_map_is_sparse(filtered, root_ids):
+        should_merge_dom = _semantic_map_is_sparse(filtered, root_ids) or self.app.lower() in {
+            "discord",
+            "notion",
+        }
+        if should_merge_dom:
             dom_elements, dom_targets = dom_interactives_to_elements(
                 self.client.get_dom_interactives(target),
                 target_id=target_id,
             )
             if root_ids and dom_elements:
                 root = elements[root_ids[0]]
-                elements[root_ids[0]] = root.model_copy(update={"children": list(dom_elements)})
+                merged_children = list(dict.fromkeys([*root.children, *dom_elements]))
+                elements[root_ids[0]] = root.model_copy(update={"children": merged_children})
                 filtered = {
+                    **filtered,
                     root_ids[0]: elements[root_ids[0]],
                     **dom_elements,
                 }
                 self._dom_targets.update(dom_targets)
         window_id_value = f"cdp:{self.app.lower()}:{target['id']}"
-
         return SemanticMap(
             timestamp=datetime.now(UTC),
             focused_window=window_id_value,
@@ -662,13 +896,74 @@ class CDPBackend:
             clipboard=None,
         )
 
+    def observe(
+        self,
+        *,
+        window_id: int | None = None,
+        title: str | None = None,
+    ) -> SemanticMap:
+        targets = self.client.list_targets()
+
+        # Exact window_id match: only caller that knows the specific target.
+        if window_id is not None:
+            target = select_active_target(targets, window_id=window_id, title=None)
+            if target is None:
+                raise CDPError("No matching active CDP page target found.")
+            return self._observe_target(target)
+
+        # Always use ranked selection so placeholder targets are deprioritised.
+        # title is used only for ordering, not for hard filtering.
+        candidates = select_targets_ranked(targets, title=title)
+        if not candidates:
+            raise CDPError("No matching active CDP page target found.")
+
+        last_map: SemanticMap | None = None
+        for candidate in candidates:
+            try:
+                smap = self._observe_target(candidate)
+                if smap.elements:
+                    return smap
+                last_map = smap
+            except Exception:
+                continue
+
+        if last_map is not None:
+            return last_map
+        raise CDPError("No matching active CDP page target found.")
+
+    def get_window_stub(self) -> Window | None:
+        """Return minimal window metadata via HTTP only — no WebSocket, no DOM scraping."""
+        try:
+            targets = self.client.list_targets()
+            ranked = select_targets_ranked(targets, title=self.app)
+            target = ranked[0] if ranked else None
+            if target is None:
+                return None
+            window_id_value = f"cdp:{self.app.lower()}:{target['id']}"
+            return Window(
+                id=window_id_value,
+                app=self.app,
+                title=str(target.get("title", "")),
+                backend="cdp",
+                focused=False,
+                minimized=False,
+                bounds=(0, 0, 0, 0),
+                root_elements=[],
+            )
+        except Exception:
+            return None
+
     def set_value(self, target_id: str, text: str) -> Any:
         target_key = _target_key_from_element_id(target_id)
         target = self._targets_by_id.get(target_key)
         backend_node_id = self._backend_node_ids.get(target_id)
         dom_target = self._dom_targets.get(target_id)
         if target is not None and dom_target is not None:
-            return self.client.set_value_dom(target, dom_target, text)
+            _ensure_dom_action(target_id, dom_target, "set_value")
+            return _with_target_metadata(
+                self.client.set_value_dom(target, dom_target, text),
+                dom_target,
+            )
         if target is None or backend_node_id is None:
             raise CDPError(f"Element {target_id} is not cached; observe before acting.")
         return self.client.set_value(target, backend_node_id, text)
@@ -679,7 +974,11 @@ class CDPBackend:
         backend_node_id = self._backend_node_ids.get(target_id)
         dom_target = self._dom_targets.get(target_id)
         if target is not None and dom_target is not None:
-            return self.client.invoke_dom(target, dom_target)
+            _ensure_dom_action(target_id, dom_target, "invoke")
+            return _with_target_metadata(
+                self.client.invoke_dom(target, dom_target),
+                dom_target,
+            )
         if target is None or backend_node_id is None:
             raise CDPError(f"Element {target_id} is not cached; observe before acting.")
         return self.client.invoke(target, backend_node_id)
@@ -698,7 +997,16 @@ class CDPBackend:
         target = self._active_target()
         return self.client.key_combo(target, keys)
 
-    def insert_text(self, text: str) -> Any:
+    def insert_text(self, text: str, *, target_id: str | None = None) -> Any:
+        if target_id is not None:
+            target_key = _target_key_from_element_id(target_id)
+            target = self._targets_by_id.get(target_key)
+            dom_target = self._dom_targets.get(target_id)
+            if target is not None and dom_target is not None:
+                return _with_target_metadata(
+                    self.client.insert_text_dom(target, dom_target, text),
+                    dom_target,
+                )
         target = self._active_target()
         return self.client.insert_text(target, text)
 
@@ -750,12 +1058,37 @@ def dom_interactives_to_elements(
             "role": role,
             "name": name,
             "value": item.get("value"),
+            "actions": list(actions),
         }
     return elements, dom_targets
 
 
 def _semantic_map_is_sparse(elements: dict[str, Element], root_ids: list[str]) -> bool:
     return len(elements) <= len(root_ids)
+
+
+def _with_target_metadata(result: Any, dom_target: dict[str, Any]) -> Any:
+    if not isinstance(result, dict):
+        return result
+    return {
+        **result,
+        "target": {
+            "selector": dom_target.get("selector"),
+            "role": dom_target.get("role"),
+            "name": dom_target.get("name"),
+            "value": dom_target.get("value"),
+        },
+    }
+
+
+def _ensure_dom_action(target_id: str, dom_target: dict[str, Any], action: str) -> None:
+    actions = dom_target.get("actions") or []
+    if action not in actions:
+        raise CDPError(
+            f"Element {target_id} role={dom_target.get('role')} "
+            f"name={dom_target.get('name')!r} does not support {action}; "
+            f"available actions: {actions}"
+        )
 
 
 def _ax_tree_has_useful_nodes(nodes: list[dict[str, Any]]) -> bool:
@@ -795,6 +1128,7 @@ _DOM_INTERACTIVE_SCRIPT = r"""
   function roleFor(el) {
     const explicit = el.getAttribute("role");
     if (explicit) return explicit;
+    if (el.getAttribute("contenteditable") === "true") return "textbox";
     const tag = el.localName.toLowerCase();
     if (tag === "a") return "link";
     if (tag === "button") return "button";
@@ -809,27 +1143,63 @@ _DOM_INTERACTIVE_SCRIPT = r"""
     return "generic";
   }
   function nameFor(el) {
-    return (el.getAttribute("aria-label") || el.innerText || el.value || el.textContent || el.title || "").trim().replace(/\s+/g, " ");
+    const text = (el.getAttribute("aria-label") || el.innerText || el.value || el.textContent || el.title || "").trim().replace(/\s+/g, " ");
+    if (!text && el.getAttribute("contenteditable") === "true") return "(text block)";
+    return text;
   }
-  return Array.from(document.querySelectorAll("a[href], button, input, textarea, select, [role='button'], [role='link']"))
+  function hiddenVisualAncestor(el) {
+    let node = el;
+    while (node && node.nodeType === Node.ELEMENT_NODE) {
+      if (Array.from(node.classList || []).some(name => name.toLowerCase().includes("hiddenvisually"))) {
+        return node;
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+  function closestClickable(el) {
+    return el.closest("button, a[href], [role='button'], [role='link'], input, textarea, select, [contenteditable='true']") || el;
+  }
+  const seen = new Set();
+  function recordFor(labelEl, clickEl, role, actions) {
+    const name = nameFor(labelEl) || nameFor(clickEl);
+    const rect = clickEl.getBoundingClientRect();
+    if (!name || rect.width <= 0 || rect.height <= 0 || clickEl.disabled) return null;
+    const key = `${role}:${name}`;
+    if (seen.has(key)) return null;
+    seen.add(key);
+    return {
+      selector: selectorFor(clickEl),
+      role,
+      name,
+      value: clickEl.href || clickEl.value || null,
+      bounds: [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)],
+      enabled: !clickEl.disabled,
+      actions
+    };
+  }
+  const interactiveRecords = Array.from(document.querySelectorAll("a[href], button, input, textarea, select, [role='button'], [role='link'], [contenteditable='true']"))
     .filter(el => {
       const rect = el.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0 && !el.disabled && nameFor(el);
     })
-    .slice(0, 500)
+    .slice(0, 350)
     .map(el => {
-      const rect = el.getBoundingClientRect();
-      const role = roleFor(el);
-      return {
-        selector: selectorFor(el),
-        role,
-        name: nameFor(el),
-        value: el.href || el.value || null,
-        bounds: [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)],
-        enabled: !el.disabled,
-        actions: role === "link" || role === "button" ? ["invoke"] : ["set_value"]
-      };
-    });
+      const hidden = hiddenVisualAncestor(el);
+      const clickEl = hidden && hidden.parentElement ? closestClickable(hidden.parentElement) : el;
+      const role = roleFor(clickEl);
+      const actions = (role === "link" || role === "button") ? ["invoke"]
+        : clickEl.getAttribute("contenteditable") === "true" ? ["invoke", "set_value"]
+        : ["set_value"];
+      return recordFor(el, clickEl, role, actions);
+    })
+    .filter(Boolean);
+  const textRecords = Array.from(document.querySelectorAll("[id^='message-content-'], [role='article'], [role='listitem'], p, li, h1, h2, h3"))
+    .map(el => recordFor(el, el, "text", []))
+    .filter(Boolean)
+    .filter(item => item.name.length <= 800)
+    .slice(0, 150);
+  return [...interactiveRecords, ...textRecords].slice(0, 500);
 })()
 """
 
@@ -901,6 +1271,35 @@ def _code_for_key(key: str) -> str:
     if len(key) == 1 and key.isdigit():
         return f"Digit{key}"
     return key
+
+
+def _normalize_key(key: str) -> str:
+    aliases = {
+        "ctrl": "Control",
+        "control": "Control",
+        "shift": "Shift",
+        "alt": "Alt",
+        "meta": "Meta",
+        "command": "Meta",
+        "cmd": "Meta",
+        "win": "Meta",
+        "enter": "Enter",
+        "return": "Enter",
+        "escape": "Escape",
+        "esc": "Escape",
+        "tab": "Tab",
+        "backspace": "Backspace",
+        "delete": "Delete",
+        "arrowleft": "ArrowLeft",
+        "left": "ArrowLeft",
+        "arrowup": "ArrowUp",
+        "up": "ArrowUp",
+        "arrowright": "ArrowRight",
+        "right": "ArrowRight",
+        "arrowdown": "ArrowDown",
+        "down": "ArrowDown",
+    }
+    return aliases.get(key.lower(), key)
 
 
 def _virtual_key_code(key: str) -> int:

@@ -86,39 +86,45 @@ def test_local_conductor_focus_window_selects_cdp_backend():
     assert conductor.cdp_backend is backend
 
 
-def test_win32_foreground_controller_retries_thread_attach(monkeypatch):
+def test_win32_foreground_controller_focuses_window(monkeypatch):
     calls = []
-    foreground_windows = iter([100, 100, 200])
+    foreground_windows = iter([100, 200])
 
     win32gui = types.SimpleNamespace(
         GetForegroundWindow=lambda: next(foreground_windows),
-        BringWindowToTop=lambda hwnd: calls.append(("bring", hwnd)),
+        ShowWindow=lambda hwnd, cmd: calls.append(("show", hwnd, cmd)),
         SetForegroundWindow=lambda hwnd: calls.append(("set", hwnd)),
     )
-    win32process = types.SimpleNamespace(
-        GetWindowThreadProcessId=lambda hwnd: (hwnd + 1000, 0),
-        AttachThreadInput=lambda source, target, attach: calls.append(
-            ("attach", source, target, attach)
-        ),
-    )
-    win32api = types.SimpleNamespace(GetCurrentThreadId=lambda: 5000)
+    win32con = types.SimpleNamespace(SW_RESTORE=9)
 
     monkeypatch.setattr("aria.conductor.local.sys.platform", "win32")
     monkeypatch.setitem(sys.modules, "win32gui", win32gui)
-    monkeypatch.setitem(sys.modules, "win32process", win32process)
-    monkeypatch.setitem(sys.modules, "win32api", win32api)
+    monkeypatch.setitem(sys.modules, "win32con", win32con)
 
-    result = Win32ForegroundController(sleep=lambda _: calls.append(("sleep",))).force_foreground(
-        200
-    )
+    result = Win32ForegroundController().force_foreground(200)
 
-    assert result == {"ok": True, "hwnd": 200, "attempts": 1}
-    assert ("attach", 1100, 5000, True) in calls
-    assert ("attach", 1200, 5000, True) in calls
-    assert ("bring", 200) in calls
+    assert result == {"ok": True, "hwnd": 200}
+    assert ("show", 200, 9) in calls
     assert ("set", 200) in calls
-    assert ("attach", 1200, 5000, False) in calls
-    assert ("attach", 1100, 5000, False) in calls
+
+
+def test_win32_foreground_controller_returns_error_when_focus_fails(monkeypatch):
+    calls = []
+
+    win32gui = types.SimpleNamespace(
+        GetForegroundWindow=lambda: 100,  # never changes to target
+        ShowWindow=lambda hwnd, cmd: calls.append(("show", hwnd, cmd)),
+        SetForegroundWindow=lambda hwnd: calls.append(("set", hwnd)),
+    )
+    win32con = types.SimpleNamespace(SW_RESTORE=9)
+
+    monkeypatch.setattr("aria.conductor.local.sys.platform", "win32")
+    monkeypatch.setitem(sys.modules, "win32gui", win32gui)
+    monkeypatch.setitem(sys.modules, "win32con", win32con)
+
+    result = Win32ForegroundController().force_foreground(200)
+
+    assert result == {"ok": False, "hwnd": 200, "error": "SetForegroundWindow did not take effect"}
 
 
 def test_win32_foreground_controller_rejects_non_windows(monkeypatch):
@@ -263,6 +269,61 @@ def test_local_conductor_routes_type_to_cdp_backend():
 
     assert result == {"ok": True}
     assert backend.call == "hello"
+
+
+def test_local_conductor_routes_targeted_type_to_cdp_backend():
+    class FakeBackend:
+        def insert_text(self, text, *, target_id=None):
+            self.call = (text, target_id)
+            return {"ok": True}
+
+    backend = FakeBackend()
+    conductor = LocalConductor(cdp_backend=backend)
+
+    result = asyncio.run(
+        conductor.execute(
+            Action(
+                type="type",
+                target_id="cdp:page-1:dom_58",
+                payload={"text": "hello"},
+            )
+        )
+    )
+
+    assert result == {"ok": True}
+    assert backend.call == ("hello", "cdp:page-1:dom_58")
+
+
+def test_local_conductor_uses_last_invoked_textbox_for_untargeted_type():
+    class FakeBackend:
+        def invoke(self, target_id):
+            return {
+                "ok": True,
+                "target": {
+                    "selector": "#text-block",
+                    "role": "textbox",
+                    "name": "(text block)",
+                    "value": None,
+                },
+            }
+
+        def insert_text(self, text, *, target_id=None):
+            self.call = (text, target_id)
+            return {"ok": True}
+
+    backend = FakeBackend()
+    conductor = LocalConductor(cdp_backend=backend)
+
+    invoke_result = asyncio.run(
+        conductor.execute(Action(type="invoke", target_id="cdp:page-1:dom_58"))
+    )
+    type_result = asyncio.run(
+        conductor.execute(Action(type="type", payload={"text": "hello\nworld"}))
+    )
+
+    assert invoke_result["ok"] is True
+    assert type_result == {"ok": True}
+    assert backend.call == ("hello\nworld", "cdp:page-1:dom_58")
 
 
 def test_local_conductor_routes_navigate_to_cdp_backend():

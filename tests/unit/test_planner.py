@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import json
 from dataclasses import dataclass
 
@@ -10,6 +11,8 @@ from aria.planner import (
     SYSTEM_PROMPT,
     OllamaChatClient,
     OllamaPlanner,
+    _channels_match,
+    _format_state_for_llm,
     _guard_action_against_task,
     _has_failed_tool_result,
     append_tool_history,
@@ -67,6 +70,21 @@ class FakeOllamaClient:
         return self.responses.pop(0)
 
 
+class NeverCompletesExecutor(concurrent.futures.Executor):
+    def submit(self, fn, /, *args, **kwargs):
+        return concurrent.futures.Future()
+
+
+class InlineExecutor(concurrent.futures.Executor):
+    def submit(self, fn, /, *args, **kwargs):
+        future = concurrent.futures.Future()
+        try:
+            future.set_result(fn(*args, **kwargs))
+        except BaseException as exc:
+            future.set_exception(exc)
+        return future
+
+
 class FakeConductor:
     def __init__(self):
         self.actions = []
@@ -105,6 +123,18 @@ class ChannelMapConductor(FakeConductor):
         ).model_dump_json()
 
 
+class SequencedStateConductor(FakeConductor):
+    def __init__(self, states):
+        super().__init__()
+        self.states = list(states)
+
+    async def get_current_state(self, scope):
+        assert scope == "focused+registry"
+        if len(self.states) > 1:
+            return self.states.pop(0)
+        return self.states[0]
+
+
 def tool_call(name, arguments, tool_call_id="call-1"):
     return FakeToolCall(
         id=tool_call_id,
@@ -117,7 +147,6 @@ def test_tool_schema_valid():
 
     assert set(tools) == {
         "focus_window",
-        "observe_window",
         "set_value",
         "type",
         "navigate",
@@ -155,15 +184,44 @@ def test_end_turn_exits_complete():
     client = FakeOllamaClient(
         [FakeResponse([FakeChoice("stop", FakeMessage(content="Done"))])]
     )
-    planner = OllamaPlanner(client=client, conductor=FakeConductor())
+    planner = OllamaPlanner(
+        client=client,
+        conductor=FakeConductor(),
+        executor=InlineExecutor(),
+    )
 
     result = asyncio.run(planner.run_task("do it"))
 
-    assert result == {"status": "complete", "turns": 1}
+    assert result["status"] == "complete"
+    assert result["turns"] == 1
+    assert result["message"] == "Done"
+    assert "elapsed_seconds" in result
+    assert "total_prompt_tokens" in result
     assert client.calls[0]["model"] == OLLAMA_MODEL
     assert client.calls[0]["tools"] == OLLAMA_TOOLS
+    assert client.calls[0]["extra_body"] == {"think": False}
     assert client.calls[0]["messages"][0] == {"role": "system", "content": SYSTEM_PROMPT}
+    assert SYSTEM_PROMPT.startswith("/no_think\n")
     assert client.calls[0]["messages"][1] == {"role": "user", "content": "do it"}
+
+
+def test_planner_progress_uses_stdout_not_stderr(capsys):
+    client = FakeOllamaClient(
+        [FakeResponse([FakeChoice("stop", FakeMessage(content="Done"))])]
+    )
+    planner = OllamaPlanner(
+        client=client,
+        conductor=FakeConductor(),
+        executor=InlineExecutor(),
+    )
+
+    asyncio.run(planner.run_task("do it"))
+
+    captured = capsys.readouterr()
+    assert "[turn 01 |" in captured.out
+    assert "Aria run summary" in captured.out
+    captured.out.encode("ascii")
+    assert captured.err == ""
 
 
 def test_tool_call_executes_action_and_appends_ollama_tool_history():
@@ -178,36 +236,101 @@ def test_tool_call_executes_action_and_appends_ollama_tool_history():
         ]
     )
     conductor = FakeConductor()
-    planner = OllamaPlanner(client=client, conductor=conductor)
+    planner = OllamaPlanner(
+        client=client,
+        conductor=conductor,
+        executor=InlineExecutor(),
+    )
 
     result = asyncio.run(planner.run_task("type hi"))
 
-    assert result == {
-        "status": "complete",
-        "turns": 2,
-        "tool_trace": [
-            {
-                "name": "set_value",
-                "action": {
-                    "type": "set_value",
-                    "target_id": "cdp:page:nodeId_2",
-                    "payload": {"text": "hi"},
-                },
-                "result": "{'ok': True, 'action': 'set_value'}",
-            }
-        ],
-    }
+    assert result["status"] == "complete"
+    assert result["turns"] == 2
+    assert result["message"] == "Done"
+    assert result["tool_trace"] == [
+        {
+            "name": "set_value",
+            "action": {
+                "type": "set_value",
+                "target_id": "cdp:page:nodeId_2",
+                "payload": {"text": "hi"},
+            },
+            "result": "{'ok': True, 'action': 'set_value'}",
+        }
+    ]
     assert conductor.actions == [
         Action(type="set_value", target_id="cdp:page:nodeId_2", payload={"text": "hi"})
     ]
     second_call_messages = client.calls[1]["messages"]
-    assert second_call_messages[2]["role"] == "assistant"
-    assert second_call_messages[2]["tool_calls"] == [tool]
-    assert second_call_messages[3] == {
+    # messages: [system, task, state_turn_1, assistant, tool, state_turn_2(current)]
+    assert second_call_messages[2]["role"] == "user"  # state persisted from turn 1
+    assert second_call_messages[3]["role"] == "assistant"
+    assert second_call_messages[3]["tool_calls"] == [tool]
+    assert second_call_messages[4] == {
         "role": "tool",
         "tool_call_id": "call-1",
         "content": "{'ok': True, 'action': 'set_value'}",
     }
+
+
+def test_planner_fails_if_model_stops_after_partial_write_verification():
+    written_text = "Summary of Discord #announcements:\n- Open Campus on May 15\n- Ship It at 3 PM"
+    before_write = empty_semantic_map_json()
+    after_partial_write = SemanticMap(
+        timestamp="2026-05-24T20:00:00Z",
+        focused_window="cdp:notion:page-1",
+        windows=[
+            {
+                "id": "cdp:notion:page-1",
+                "app": "Notion",
+                "title": "Demo",
+                "backend": "cdp",
+                "focused": True,
+                "minimized": False,
+                "bounds": [0, 0, 800, 600],
+                "root_elements": ["cdp:page-1:dom_1"],
+            }
+        ],
+        elements={
+            "cdp:page-1:dom_1": {
+                "id": "cdp:page-1:dom_1",
+                "role": "text",
+                "name": "Summary of Discord #announcements:",
+                "value": None,
+                "bounds": [0, 0, 10, 10],
+                "enabled": True,
+                "focused": False,
+                "actions": [],
+                "children": [],
+            }
+        },
+        clipboard=None,
+    ).model_dump_json()
+    type_tool = tool_call(
+        "type",
+        {
+            "type": "type",
+            "target_id": "cdp:page-1:dom_58",
+            "payload": {"text": written_text},
+        },
+    )
+    client = FakeOllamaClient(
+        [
+            FakeResponse([FakeChoice("tool_calls", FakeMessage(tool_calls=[type_tool]))]),
+            FakeResponse([FakeChoice("stop", FakeMessage(content="done"))]),
+        ]
+    )
+    planner = OllamaPlanner(
+        client=client,
+        conductor=SequencedStateConductor([before_write, after_partial_write]),
+        executor=InlineExecutor(),
+    )
+
+    result = asyncio.run(planner.run_task("write a Discord summary into Notion"))
+
+    assert result["status"] == "failed"
+    assert result["reason"] == "write_verification_failed"
+    assert result["missing_text_fragments"] == ["Open Campus on May 15", "Ship It at 3 PM"]
 
 
 def test_action_from_tool_call_infers_type_from_function_name():
@@ -239,7 +362,11 @@ def test_max_turns_guard():
             for _ in range(3)
         ]
     )
-    planner = OllamaPlanner(client=client, conductor=FakeConductor())
+    planner = OllamaPlanner(
+        client=client,
+        conductor=FakeConductor(),
+        executor=InlineExecutor(),
+    )
 
     result = asyncio.run(planner.run_task("loop", max_turns=3))
 
@@ -249,7 +376,8 @@ def test_max_turns_guard():
 
 
 def test_timeout_guard_includes_tool_trace_when_actions_ran():
-    times = iter([0.0, 0.0, 301.0])
+    # monotonic call order: start, turn0(timeout_check, llm_start, llm_end), turn1(timeout_check)
+    times = iter([0.0, 0.0, 0.0, 0.0, 301.0])
     tool = tool_call(
         "focus_window",
         {"type": "focus_window", "target_id": "cdp:notion:page-2"},
@@ -260,6 +388,7 @@ def test_timeout_guard_includes_tool_trace_when_actions_ran():
         ),
         conductor=FakeConductor(),
         monotonic=lambda: next(times),
+        executor=InlineExecutor(),
     )
 
     result = asyncio.run(planner.run_task("timeout", timeout=300.0))
@@ -269,27 +398,71 @@ def test_timeout_guard_includes_tool_trace_when_actions_ran():
     assert result["tool_trace"][0]["name"] == "focus_window"
 
 
-def test_repeated_observe_without_new_information_stops_with_diagnostic():
-    observe = tool_call(
-        "observe_window",
-        {"type": "observe_window", "target_id": "cdp:chrome:page-1"},
+def test_timeout_guard_interrupts_stuck_llm_call():
+    planner = OllamaPlanner(
+        client=FakeOllamaClient([]),
+        conductor=FakeConductor(),
+        executor=NeverCompletesExecutor(),
     )
-    client = FakeOllamaClient(
-        [
-            FakeResponse(
-                [FakeChoice("tool_calls", FakeMessage(tool_calls=[observe]))]
-            )
-            for _ in range(4)
-        ]
-    )
-    planner = OllamaPlanner(client=client, conductor=FakeConductor())
 
-    result = asyncio.run(planner.run_task("click a result"))
+    result = asyncio.run(planner.run_task("timeout", timeout=0.01))
 
-    assert result["status"] == "stalled"
-    assert result["turns"] == 4
-    assert result["reason"] == "repeated_observe_without_new_information"
-    assert "observe_window" in result["message"]
+    assert result["status"] == "timeout"
+    assert result["turns"] == 0
+
+
+def test_format_state_for_llm_labels_active_and_background():
+    semantic_map = SemanticMap(
+        timestamp="2026-05-24T20:00:00Z",
+        focused_window="cdp:discord:UUID-D",
+        windows=[
+            {
+                "id": "cdp:discord:UUID-D",
+                "app": "Discord",
+                "title": "#announcements",
+                "backend": "cdp",
+                "focused": True,
+                "minimized": False,
+                "bounds": [0, 0, 800, 600],
+                "root_elements": ["cdp:UUID-D:dom_1"],
+            },
+            {
+                "id": "cdp:notion:UUID-N",
+                "app": "Notion",
+                "title": "My page",
+                "backend": "cdp",
+                "focused": False,
+                "minimized": False,
+                "bounds": [0, 0, 800, 600],
+                "root_elements": [],
+            },
+        ],
+        elements={
+            "cdp:UUID-D:dom_1": {
+                "id": "cdp:UUID-D:dom_1",
+                "role": "link",
+                "name": "announcements (text channel)",
+                "value": "https://discord.com/channels/s/c",
+                "bounds": [0, 0, 10, 10],
+                "enabled": True,
+                "focused": False,
+                "actions": ["invoke"],
+                "children": [],
+            }
+        },
+        clipboard=None,
+    ).model_dump_json()
+
+    result = _format_state_for_llm(semantic_map)
+
+    assert "=== ACTIVE: Discord ===" in result
+    assert "=== BACKGROUND: Notion ===" in result
+    assert "cdp:UUID-D:dom_1" in result
+    assert "invoke to navigate" in result
+    # Background section should NOT list elements
+    assert "cdp:UUID-N:" not in result
+    # Background section should include focus hint
+    assert 'focus_window("cdp:notion:UUID-N")' in result
 
 
 def test_repeated_action_without_progress_stops_with_diagnostic():
@@ -303,7 +476,11 @@ def test_repeated_action_without_progress_stops_with_diagnostic():
             for _ in range(4)
         ]
     )
-    planner = OllamaPlanner(client=client, conductor=FakeConductor())
+    planner = OllamaPlanner(
+        client=client,
+        conductor=FakeConductor(),
+        executor=InlineExecutor(),
+    )
 
     result = asyncio.run(planner.run_task("click a channel"))
 
@@ -438,6 +615,80 @@ def test_guard_rejects_placeholder_credentials():
     assert result["reason"] == "placeholder_credentials"
 
 
+def test_oscillating_actions_stops_with_diagnostic():
+    notion_focus = tool_call(
+        "focus_window",
+        {"type": "focus_window", "target_id": "cdp:notion:PAGE-1"},
+        tool_call_id="call-a",
+    )
+    discord_focus = tool_call(
+        "focus_window",
+        {"type": "focus_window", "target_id": "cdp:discord:PAGE-2"},
+        tool_call_id="call-b",
+    )
+    client = FakeOllamaClient(
+        [
+            FakeResponse([FakeChoice("tool_calls", FakeMessage(tool_calls=[notion_focus]))]),
+            FakeResponse([FakeChoice("tool_calls", FakeMessage(tool_calls=[discord_focus]))]),
+            FakeResponse([FakeChoice("tool_calls", FakeMessage(tool_calls=[notion_focus]))]),
+            FakeResponse([FakeChoice("tool_calls", FakeMessage(tool_calls=[discord_focus]))]),
+        ]
+    )
+    planner = OllamaPlanner(
+        client=client,
+        conductor=FakeConductor(),
+        executor=InlineExecutor(),
+    )
+
+    result = asyncio.run(planner.run_task("write to notion"))
+
+    assert result["status"] == "stalled"
+    assert result["reason"] == "oscillating_actions"
+    assert result["turns"] == 4
+
+
+def test_guard_allows_misspelled_discord_channel_name():
+    """Discord server owners sometimes misspell channel names; the guard should be tolerant."""
+    semantic_map = SemanticMap(
+        timestamp="2026-05-24T20:00:00Z",
+        focused_window="cdp:discord:page-1",
+        windows=[],
+        elements={
+            "cdp:page-1:dom_9": {
+                "id": "cdp:page-1:dom_9",
+                "role": "link",
+                "name": "📢-annoucements (text channel)",
+                "value": "https://discord.com/channels/server/announcements",
+                "bounds": [0, 0, 10, 10],
+                "enabled": True,
+                "focused": False,
+                "actions": ["invoke"],
+                "children": [],
+            }
+        },
+        clipboard=None,
+    ).model_dump_json()
+
+    result = _guard_action_against_task(
+        "read #announcements",
+        semantic_map,
+        Action(type="invoke", target_id="cdp:page-1:dom_9"),
+    )
+
+    assert result is None  # guard should allow it despite the typo
+
+
+def test_channels_match_exact():
+    assert _channels_match("announcements", "announcements (text channel)")
+    assert _channels_match("announcements", "#announcements (text channel)")
+    assert not _channels_match("announcements", "rules (text channel)")
+
+
+def test_channels_match_tolerates_typos():
+    assert _channels_match("announcements", "📢-annoucements (text channel)")
+    assert not _channels_match("announcements", "📢-general (text channel)")
+
+
 def test_failed_tool_result_detection_handles_structured_failures():
     assert _has_failed_tool_result({"ok": False, "error": "captcha"})
     assert _has_failed_tool_result({"ok": False, "reason": "wrong_discord_channel"})
@@ -450,11 +701,14 @@ def test_timeout_guard():
         client=FakeOllamaClient([]),
         conductor=FakeConductor(),
         monotonic=lambda: next(times),
+        executor=InlineExecutor(),
     )
 
     result = asyncio.run(planner.run_task("timeout", timeout=300.0))
 
-    assert result == {"status": "timeout", "turns": 0}
+    assert result["status"] == "timeout"
+    assert result["turns"] == 0
+    assert result["elapsed_seconds"] == 301.0
 
 
 def test_ollama_chat_client_uses_local_openai_compatible_endpoint(monkeypatch):
