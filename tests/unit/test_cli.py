@@ -175,6 +175,29 @@ def test_run_command_prints_planner_result(monkeypatch):
     assert '"status": "complete"' in result.stdout
 
 
+def test_run_command_prints_unicode_result_without_rich_json_crash(monkeypatch):
+    from aria.backends.cdp import CDPBackend
+
+    class FakePlanner:
+        def __init__(self, conductor):
+            self.conductor = conductor
+
+        async def run_task(self, task):
+            return {"status": "complete", "message": "杪"}
+
+    monkeypatch.setattr("aria.__main__.OllamaPlanner", FakePlanner)
+    monkeypatch.setattr(
+        "aria.__main__._discover_backends",
+        lambda requested: [CDPBackend(port=9222, app="Chrome")],
+    )
+
+    result = CliRunner().invoke(app, ["run", "do it"])
+
+    assert result.exit_code == 0
+    assert '"status": "complete"' in result.stdout
+    assert "\\u676a" in result.stdout
+
+
 def test_run_command_connects_to_explicit_apps(monkeypatch):
     from aria.backends.cdp import CDPBackend
 
@@ -219,6 +242,23 @@ def test_discover_backends_auto_launches_missing_explicit_app(monkeypatch):
     assert len(backends) == 1
     assert backends[0].app == "Discord"
     assert backends[0].port == 9224
+
+
+def test_run_command_reports_reused_live_explicit_port(monkeypatch):
+    class FakePlanner:
+        def __init__(self, conductor):
+            self.conductor = conductor
+
+        async def run_task(self, task):
+            return {"status": "complete"}
+
+    monkeypatch.setattr("aria.__main__.cdp_port_ready", lambda port: True)
+    monkeypatch.setattr("aria.__main__.OllamaPlanner", FakePlanner)
+
+    result = CliRunner().invoke(app, ["run", "--app", "notion", "do it"])
+
+    assert result.exit_code == 0
+    assert "Using existing Notion CDP port 9225" in result.stdout
 
 
 def test_discover_backends_rejects_running_app_without_debug_port(monkeypatch):

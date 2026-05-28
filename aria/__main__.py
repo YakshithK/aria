@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 from rich.console import Console
 from rich.table import Table
@@ -83,7 +84,7 @@ def launch(app_name: str, restart: bool = typer.Option(False, "--restart")) -> N
     except Exception as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from exc
-    console.print_json(data=result)
+    _print_json(result)
 
 
 def _discover_backends(requested: list[str]) -> list[CDPBackend]:
@@ -113,6 +114,8 @@ def _discover_backends(requested: list[str]) -> list[CDPBackend]:
                             f"on port {port} within 10s."
                         )
                         raise typer.Exit(1)
+            else:
+                console.print(f"[dim]Using existing {APP_NAMES[normalized]} CDP port {port}[/dim]")
             backends.append(CDPBackend(port=port, app=APP_NAMES[normalized]))
         return backends
 
@@ -143,7 +146,11 @@ def run(
     except Exception as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from exc
-    console.print_json(data=result)
+    _print_json(result)
+
+
+def _print_json(data: object) -> None:
+    console.print(json.dumps(data, indent=2, ensure_ascii=True))
 
 
 if __name__ == "__main__":
