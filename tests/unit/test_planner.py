@@ -350,6 +350,42 @@ def test_planner_executes_textual_tool_call_wrapped_in_tools_tags():
     assert result["tool_trace"][0]["source"] == "text_tool_call"
 
 
+def test_planner_executes_textual_tool_call_wrapped_in_spaced_tools_tags():
+    client = FakeOllamaClient(
+        [
+            FakeResponse(
+                [
+                    FakeChoice(
+                        "stop",
+                        FakeMessage(
+                            content=(
+                                '< tools >\n{"name": "focus_window", "arguments": '
+                                '{" target_id": "cdp:notion:page-1"}}\n</ tools >'
+                            )
+                        ),
+                    )
+                ]
+            ),
+            FakeResponse([FakeChoice("stop", FakeMessage(content="Done"))]),
+        ]
+    )
+    conductor = FakeConductor()
+    planner = OllamaPlanner(
+        client=client,
+        conductor=conductor,
+        executor=InlineExecutor(),
+    )
+
+    result = asyncio.run(planner.run_task("switch to Notion"))
+
+    assert result["status"] == "complete"
+    assert result["turns"] == 2
+    assert conductor.actions == [
+        Action(type="focus_window", target_id="cdp:notion:page-1", payload=None)
+    ]
+    assert result["tool_trace"][0]["source"] == "text_tool_call"
+
+
 def test_planner_resolves_textual_tool_call_alias_with_extra_spaces():
     semantic_map = SemanticMap(
         timestamp="2026-05-24T20:00:00Z",

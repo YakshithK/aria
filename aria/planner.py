@@ -304,8 +304,8 @@ def _action_from_text_tool_call(text: str) -> tuple[str, Action] | None:
     if not text:
         return None
     stripped = text.strip()
-    if stripped.startswith("<tools>") and stripped.endswith("</tools>"):
-        stripped = stripped[len("<tools>") : -len("</tools>")].strip()
+    stripped = re.sub(r"^<\s*tools\s*>\s*", "", stripped, flags=re.IGNORECASE)
+    stripped = re.sub(r"\s*</\s*tools\s*>\s*$", "", stripped, flags=re.IGNORECASE)
     if stripped.startswith("```"):
         stripped = stripped.strip("`").strip()
         if stripped.lower().startswith("json"):
@@ -321,7 +321,7 @@ def _action_from_text_tool_call(text: str) -> tuple[str, Action] | None:
     if not isinstance(raw_name, str) or not isinstance(arguments, dict):
         return None
     name = raw_name.lstrip(".")
-    arguments = dict(arguments)
+    arguments = {str(key).strip(): value for key, value in arguments.items()}
     arguments.setdefault("type", name)
     payload = arguments.get("payload")
     if payload is not None and not isinstance(payload, dict):
