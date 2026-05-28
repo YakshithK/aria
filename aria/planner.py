@@ -304,6 +304,8 @@ def _action_from_text_tool_call(text: str) -> tuple[str, Action] | None:
     if not text:
         return None
     stripped = text.strip()
+    if stripped.startswith("<tools>") and stripped.endswith("</tools>"):
+        stripped = stripped[len("<tools>") : -len("</tools>")].strip()
     if stripped.startswith("```"):
         stripped = stripped.strip("`").strip()
         if stripped.lower().startswith("json"):
