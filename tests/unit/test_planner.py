@@ -149,6 +149,7 @@ def test_tool_schema_valid():
         "focus_window",
         "set_value",
         "type",
+        "write_to",
         "navigate",
         "invoke",
         "scroll",
@@ -271,6 +272,65 @@ def test_tool_call_executes_action_and_appends_ollama_tool_history():
         "tool_call_id": "call-1",
         "content": "{'ok': True, 'action': 'set_value'}",
     }
+
+
+def test_planner_resolves_compact_target_alias_before_executing_action():
+    semantic_map = SemanticMap(
+        timestamp="2026-05-24T20:00:00Z",
+        focused_window="cdp:notion:UUID-N",
+        windows=[
+            {
+                "id": "cdp:notion:UUID-N",
+                "app": "Notion",
+                "title": "My page",
+                "backend": "cdp",
+                "focused": True,
+                "minimized": False,
+                "bounds": [0, 0, 800, 600],
+                "root_elements": ["cdp:UUID-N:dom_58"],
+            }
+        ],
+        elements={
+            "cdp:UUID-N:dom_58": {
+                "id": "cdp:UUID-N:dom_58",
+                "role": "textbox",
+                "name": "",
+                "value": None,
+                "bounds": [0, 0, 10, 10],
+                "enabled": True,
+                "focused": False,
+                "actions": ["set_value"],
+                "children": [],
+            }
+        },
+        clipboard=None,
+    ).model_dump_json()
+    write_tool = tool_call(
+        "write_to",
+        {
+            "type": "write_to",
+            "target_id": "notion:box_1",
+            "payload": {"text": "Summary\n- Complete result line"},
+        },
+    )
+    client = FakeOllamaClient(
+        [
+            FakeResponse([FakeChoice("tool_calls", FakeMessage(tool_calls=[write_tool]))]),
+            FakeResponse([FakeChoice("stop", FakeMessage(content="Done"))]),
+        ]
+    )
+    conductor = SequencedStateConductor([semantic_map, semantic_map])
+    planner = OllamaPlanner(client=client, conductor=conductor, executor=InlineExecutor())
+
+    asyncio.run(planner.run_task("write into Notion"))
+
+    assert conductor.actions == [
+        Action(
+            type="write_to",
+            target_id="cdp:UUID-N:dom_58",
+            payload={"text": "Summary\n- Complete result line"},
+        )
+    ]
 
 
 def test_planner_fails_if_model_stops_after_partial_write_verification():
@@ -457,12 +517,78 @@ def test_format_state_for_llm_labels_active_and_background():
 
     assert "=== ACTIVE: Discord ===" in result
     assert "=== BACKGROUND: Notion ===" in result
-    assert "cdp:UUID-D:dom_1" in result
+    assert "[navigation]" in result
+    assert "discord:ch_1" in result
+    assert "cdp:UUID-D:dom_1" not in result
     assert "invoke to navigate" in result
     # Background section should NOT list elements
     assert "cdp:UUID-N:" not in result
     # Background section should include focus hint
     assert 'focus_window("cdp:notion:UUID-N")' in result
+
+
+def test_format_state_for_llm_groups_content_and_toolbar_regions():
+    semantic_map = SemanticMap(
+        timestamp="2026-05-24T20:00:00Z",
+        focused_window="cdp:notion:UUID-N",
+        windows=[
+            {
+                "id": "cdp:notion:UUID-N",
+                "app": "Notion",
+                "title": "My page",
+                "backend": "cdp",
+                "focused": True,
+                "minimized": False,
+                "bounds": [0, 0, 800, 600],
+                "root_elements": [],
+            }
+        ],
+        elements={
+            "cdp:UUID-N:dom_1": {
+                "id": "cdp:UUID-N:dom_1",
+                "role": "button",
+                "name": "Share",
+                "value": None,
+                "bounds": [0, 0, 10, 10],
+                "enabled": True,
+                "focused": False,
+                "actions": ["invoke"],
+                "children": [],
+            },
+            "cdp:UUID-N:dom_2": {
+                "id": "cdp:UUID-N:dom_2",
+                "role": "text",
+                "name": "Existing page body",
+                "value": None,
+                "bounds": [0, 0, 10, 10],
+                "enabled": True,
+                "focused": False,
+                "actions": [],
+                "children": [],
+            },
+            "cdp:UUID-N:dom_3": {
+                "id": "cdp:UUID-N:dom_3",
+                "role": "textbox",
+                "name": "",
+                "value": None,
+                "bounds": [0, 0, 10, 10],
+                "enabled": True,
+                "focused": False,
+                "actions": ["set_value"],
+                "children": [],
+            },
+        },
+        clipboard=None,
+    ).model_dump_json()
+
+    result = _format_state_for_llm(semantic_map)
+
+    assert "[toolbar]" in result
+    assert "notion:btn_1" in result
+    assert "[content]" in result
+    assert "notion:txt_1" in result
+    assert "notion:box_1" in result
+    assert "cdp:UUID-N:dom_" not in result
 
 
 def test_repeated_action_without_progress_stops_with_diagnostic():

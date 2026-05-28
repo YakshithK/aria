@@ -26,11 +26,11 @@ the state is refreshed automatically on the next turn.
 State format:
 - ACTIVE app section: shows all interactive elements with target_ids, roles, and action hints
 - BACKGROUND app sections: show only the window id — use focus_window to switch
-- Element ids look like cdp:<uuid>:<node> — use these with invoke, set_value, and type
+- Element ids are compact aliases like discord:ch_1 or notion:box_1 — use these with invoke, set_value, type, and write_to
 
 Rules:
 - Read the state carefully before acting.
-- After every invoke or set_value, verify the next state changed. If unchanged, try a different element.
+- Tool results may include element_state after invoke, type, or write_to. Use it as immediate confirmation instead of re-observing.
 - Use element ids from the ACTIVE section for invoke and set_value. Never invent ids.
 - To switch apps, call focus_window with the exact Window ID shown in the BACKGROUND section. Never invent window ids.
 - CRITICAL: NEVER use Win+S, Win+Tab, Alt+Tab, or ANY keyboard shortcut. All apps are already running. Use focus_window to switch between them.
@@ -43,6 +43,7 @@ Cross-app information flow:
 
 Writing into Notion:
 - When Notion is ACTIVE and you see a [textbox] element labeled '(text block)', that is the editable body. Call invoke on it, then immediately call type with your text.
+- Prefer write_to(target_id, text) for writing into an editable target. It invokes and types atomically.
 - The title textbox contains the page name — write your content into the '(text block)' element, not the title.
 - You MUST invoke a textbox before calling type — type requires an active cursor.
 
@@ -119,6 +120,26 @@ OLLAMA_TOOLS: list[dict[str, Any]] = [
                     },
                 },
                 "required": ["type", "payload"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_to",
+            "description": "Atomically invoke an editable target and write text into it.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string", "enum": ["write_to"]},
+                    "target_id": {"type": "string"},
+                    "payload": {
+                        "type": "object",
+                        "properties": {"text": {"type": "string"}},
+                        "required": ["text"],
+                    },
+                },
+                "required": ["type", "target_id", "payload"],
             },
         },
     },
@@ -279,6 +300,15 @@ def action_from_tool_call(tool_call: Any) -> Action:
     return Action(**arguments)
 
 
+def _resolve_action_target_alias(action: Action, aliases: dict[str, str]) -> Action:
+    if not action.target_id:
+        return action
+    real_target = aliases.get(action.target_id)
+    if real_target is None:
+        return action
+    return action.model_copy(update={"target_id": real_target})
+
+
 class OllamaPlanner:
     def __init__(
         self,
@@ -312,6 +342,7 @@ class OllamaPlanner:
         recent_action_keys: deque[tuple[str, str | None]] = deque(maxlen=6)
         had_failed_tool_result = False
         pending_write_verifications: list[dict[str, Any]] = []
+        known_target_aliases: dict[str, str] = {}
         start = self.monotonic()
         total_prompt_tokens = 0
         total_completion_tokens = 0
@@ -332,7 +363,8 @@ class OllamaPlanner:
                     return result
 
                 semantic_map = await self.conductor.get_current_state(scope="focused+registry")
-                formatted_state = _format_state_for_llm(semantic_map)
+                formatted_state, target_aliases = _format_state_for_llm_with_aliases(semantic_map)
+                known_target_aliases.update(target_aliases)
                 messages = [
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": task},
@@ -439,6 +471,7 @@ class OllamaPlanner:
                 tool_results = []
                 for tool_call in choice.message.tool_calls or []:
                     action = action_from_tool_call(tool_call)
+                    action = _resolve_action_target_alias(action, known_target_aliases)
                     result = _guard_action_against_task(task, semantic_map, action)
                     if result is None:
                         result = await self.conductor.execute(action)
@@ -723,7 +756,7 @@ def _has_failed_tool_result(result: Any) -> bool:
 
 
 def _is_write_action(action: Action) -> bool:
-    return action.type in {"type", "set_value"}
+    return action.type in {"type", "set_value", "write_to"}
 
 
 def _pending_write_from_action(action: Action) -> dict[str, Any] | None:
@@ -833,18 +866,23 @@ def _action_hint(role: str, actions: list[str], value: str) -> str:
     if role in ("button", "menuitem"):
         return "invoke to click"
     if role in ("textbox",) or "setvalue" in actions:
-        return "invoke first, then type/set_value"
+        return "write_to to write text"
     if role == "checkbox":
         return "invoke to toggle"
     return ""
 
 
 def _format_state_for_llm(json_str: str) -> str:
+    formatted, _aliases = _format_state_for_llm_with_aliases(json_str)
+    return formatted
+
+
+def _format_state_for_llm_with_aliases(json_str: str) -> tuple[str, dict[str, str]]:
     """Convert raw JSON semantic map to labeled-sections text for LLM consumption."""
     try:
         data = json.loads(json_str)
     except json.JSONDecodeError:
-        return json_str
+        return json_str, {}
 
     focused_window_id = data.get("focused_window")
     windows: list[dict[str, Any]] = data.get("windows") or []
@@ -860,6 +898,7 @@ def _format_state_for_llm(json_str: str) -> str:
             elements_by_uuid.setdefault(uuid, []).append((eid, el))
 
     lines: list[str] = []
+    target_aliases: dict[str, str] = {}
 
     for window in windows:
         win_id: str = window.get("id") or ""
@@ -881,21 +920,33 @@ def _format_state_for_llm(json_str: str) -> str:
             win_elements = elements_by_uuid.get(win_uuid, [])
             if win_elements:
                 lines.append("Elements:")
-                for eid, el in win_elements:
-                    role: str = el.get("role") or ""
-                    name: str = el.get("name") or ""
-                    value: str = el.get("value") or ""
-                    actions: list[str] = el.get("actions") or []
-                    focused: bool = el.get("focused", False)
+                alias_by_real = _compact_aliases_for_elements(app, win_elements)
+                for alias, real_id in alias_by_real.items():
+                    target_aliases[alias] = real_id
+                grouped = _group_elements_by_region(win_elements)
+                for region in ("navigation", "content", "toolbar", "other"):
+                    region_elements = grouped.get(region, [])
+                    if not region_elements:
+                        continue
+                    lines.append(f"[{region}]")
+                    for eid, el in region_elements:
+                        role: str = el.get("role") or ""
+                        name: str = el.get("name") or ""
+                        value: str = el.get("value") or ""
+                        actions: list[str] = el.get("actions") or []
+                        focused: bool = el.get("focused", False)
 
-                    hint = _action_hint(role, actions, value)
-                    display = name if name else "(text block)" if role == "textbox" else "(unnamed)"
-                    line = f"  {eid}  [{role}] {display!r}"
-                    if focused:
-                        line += "  *FOCUSED*"
-                    if hint:
-                        line += f"  → {hint}"
-                    lines.append(line)
+                        hint = _action_hint(role, actions, value)
+                        display = name if name else "(text block)" if role == "textbox" else "(unnamed)"
+                        alias = next(
+                            alias for alias, real_id in alias_by_real.items() if real_id == eid
+                        )
+                        line = f"  {alias}  [{role}] {display!r}"
+                        if focused:
+                            line += "  *FOCUSED*"
+                        if hint:
+                            line += f"  → {hint}"
+                        lines.append(line)
             else:
                 lines.append("  (no interactive elements found)")
                 lines.append("  Hint: use navigate to open an editable page URL in this app.")
@@ -918,4 +969,69 @@ def _format_state_for_llm(json_str: str) -> str:
     if clipboard.get("text"):
         lines.append(f"Clipboard: {clipboard['text'][:200]!r}")
 
-    return "\n".join(lines)
+    return "\n".join(lines), target_aliases
+
+
+def _compact_aliases_for_elements(
+    app: str,
+    elements: list[tuple[str, dict[str, Any]]],
+) -> dict[str, str]:
+    app_key = re.sub(r"[^a-z0-9]+", "", app.lower()) or "app"
+    counters: dict[str, int] = {}
+    aliases: dict[str, str] = {}
+    for real_id, element in elements:
+        prefix = _alias_prefix(element)
+        counters[prefix] = counters.get(prefix, 0) + 1
+        aliases[f"{app_key}:{prefix}_{counters[prefix]}"] = real_id
+    return aliases
+
+
+def _alias_prefix(element: dict[str, Any]) -> str:
+    role = str(element.get("role") or "").lower()
+    name = str(element.get("name") or "").lower()
+    value = str(element.get("value") or "").lower()
+    if role == "textbox":
+        return "box"
+    if role == "text":
+        return "txt"
+    if role == "button":
+        return "btn"
+    if role == "link" and ("text channel" in name or "discord.com/channels/" in value):
+        return "ch"
+    if role == "link":
+        return "lnk"
+    if role in {"menuitem", "tab"}:
+        return "nav"
+    if role == "checkbox":
+        return "chk"
+    return re.sub(r"[^a-z0-9]+", "", role)[:4] or "el"
+
+
+def _group_elements_by_region(
+    elements: list[tuple[str, dict[str, Any]]],
+) -> dict[str, list[tuple[str, dict[str, Any]]]]:
+    grouped: dict[str, list[tuple[str, dict[str, Any]]]] = {
+        "navigation": [],
+        "content": [],
+        "toolbar": [],
+        "other": [],
+    }
+    for item in elements:
+        _eid, element = item
+        grouped[_element_region(element)].append(item)
+    return grouped
+
+
+def _element_region(element: dict[str, Any]) -> str:
+    role = str(element.get("role") or "").lower()
+    name = str(element.get("name") or "").lower()
+    value = str(element.get("value") or "").lower()
+    if role == "text" or role == "textbox":
+        return "content"
+    if role in {"link", "tab", "menuitem"}:
+        return "navigation"
+    if "discord.com/channels/" in value or "text channel" in name:
+        return "navigation"
+    if role in {"button", "checkbox", "combobox", "searchbox"}:
+        return "toolbar"
+    return "other"

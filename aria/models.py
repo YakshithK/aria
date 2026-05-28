@@ -49,6 +49,7 @@ class Action(BaseModel):
         "invoke",
         "set_value",
         "type",
+        "write_to",
         "navigate",
         "scroll",
         "wait_for",

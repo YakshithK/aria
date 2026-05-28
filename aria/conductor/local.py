@@ -195,6 +195,30 @@ class LocalConductor:
                 return {"ok": False, "error": "set_value requires payload.text"}
             backend = self._backend_for_element(str(action.target_id))
             return await asyncio.to_thread(backend.set_value, str(action.target_id), text)
+        if action.type == "write_to":
+            text = (action.payload or {}).get("text")
+            if not isinstance(text, str):
+                return {"ok": False, "error": "write_to requires payload.text"}
+            target_id = str(action.target_id)
+            backend = self._backend_for_element(target_id)
+            invoke_result = await asyncio.to_thread(backend.invoke, target_id)
+            if _has_failed_result(invoke_result):
+                return invoke_result
+            self._last_text_target = (backend, target_id)
+            type_result = await asyncio.to_thread(
+                backend.insert_text,
+                text,
+                target_id=target_id,
+            )
+            if _has_failed_result(type_result):
+                return type_result
+            result = {"ok": True, "action": "write_to", "target_id": target_id}
+            return await asyncio.to_thread(
+                _result_with_element_state,
+                backend,
+                target_id,
+                result,
+            )
         if action.type == "type":
             text = (action.payload or {}).get("text")
             if not isinstance(text, str):
@@ -207,10 +231,16 @@ class LocalConductor:
                 if target_backend is backend:
                     target_id = remembered_target_id
             if target_id:
-                return await asyncio.to_thread(
+                result = await asyncio.to_thread(
                     backend.insert_text,
                     text,
                     target_id=target_id,
+                )
+                return await asyncio.to_thread(
+                    _result_with_element_state,
+                    backend,
+                    target_id,
+                    result,
                 )
             return await asyncio.to_thread(backend.insert_text, text)
         if action.type == "navigate":
@@ -225,7 +255,12 @@ class LocalConductor:
             result = await asyncio.to_thread(backend.invoke, str(action.target_id))
             if _is_text_target_result(result):
                 self._last_text_target = (backend, str(action.target_id))
-            return result
+            return await asyncio.to_thread(
+                _result_with_element_state,
+                backend,
+                str(action.target_id),
+                result,
+            )
         if action.type == "scroll":
             payload = action.payload or {}
             backend = self._backend_for_window(str(action.target_id)) or self._active_backend
@@ -327,6 +362,32 @@ def _parse_hwnd_target(target_id: str | None) -> int | None:
         return int(value, 0)
     except ValueError:
         return None
+
+
+def _has_failed_result(result: Any) -> bool:
+    return isinstance(result, dict) and result.get("ok") is False
+
+
+def _result_with_element_state(
+    backend: CDPBackend,
+    target_id: str,
+    result: Any,
+) -> Any:
+    if _has_failed_result(result):
+        return result
+    if not hasattr(backend, "observe"):
+        return result
+    try:
+        semantic_map = backend.observe(title=getattr(backend, "app", None))
+        data = json.loads(semantic_map.model_dump_json())
+    except Exception:
+        return result
+    element = (data.get("elements") or {}).get(target_id)
+    if not isinstance(element, dict):
+        return result
+    if isinstance(result, dict):
+        return {**result, "element_state": element}
+    return {"ok": True, "result": result, "element_state": element}
 
 
 def _is_text_target_result(result: Any) -> bool:

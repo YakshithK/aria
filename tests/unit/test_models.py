@@ -77,6 +77,7 @@ def test_semantic_map_round_trip_is_lossless():
         "invoke",
         "set_value",
         "type",
+        "write_to",
         "navigate",
         "scroll",
         "wait_for",

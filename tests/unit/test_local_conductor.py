@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from aria.conductor.local import ForegroundError, LocalConductor, Win32ForegroundController
-from aria.models import Action
+from aria.models import Action, SemanticMap
 
 
 def test_local_conductor_routes_set_value_to_cdp_backend():
@@ -324,6 +324,83 @@ def test_local_conductor_uses_last_invoked_textbox_for_untargeted_type():
     assert invoke_result["ok"] is True
     assert type_result == {"ok": True}
     assert backend.call == ("hello\nworld", "cdp:page-1:dom_58")
+
+
+def test_local_conductor_write_to_invokes_and_types_target_atomically():
+    class FakeBackend:
+        def invoke(self, target_id):
+            self.invoke_call = target_id
+            return {"ok": True}
+
+        def insert_text(self, text, *, target_id=None):
+            self.insert_call = (text, target_id)
+            return {"ok": True}
+
+    backend = FakeBackend()
+    conductor = LocalConductor(cdp_backend=backend)
+
+    result = asyncio.run(
+        conductor.execute(
+            Action(
+                type="write_to",
+                target_id="cdp:page-1:dom_58",
+                payload={"text": "hello\nworld"},
+            )
+        )
+    )
+
+    assert result == {"ok": True, "action": "write_to", "target_id": "cdp:page-1:dom_58"}
+    assert backend.invoke_call == "cdp:page-1:dom_58"
+    assert backend.insert_call == ("hello\nworld", "cdp:page-1:dom_58")
+
+
+def test_local_conductor_returns_element_state_after_targeted_type():
+    class FakeMap:
+        def model_dump_json(self):
+            return SemanticMap(
+                timestamp="2026-05-24T20:00:00Z",
+                focused_window="cdp:notion:page-1",
+                windows=[],
+                elements={
+                    "cdp:page-1:dom_58": {
+                        "id": "cdp:page-1:dom_58",
+                        "role": "textbox",
+                        "name": "hello world",
+                        "value": "hello world",
+                        "bounds": [0, 0, 10, 10],
+                        "enabled": True,
+                        "focused": True,
+                        "actions": ["set_value"],
+                        "children": [],
+                    }
+                },
+                clipboard=None,
+            ).model_dump_json()
+
+    class FakeBackend:
+        app = "Notion"
+
+        def insert_text(self, text, *, target_id=None):
+            return {"ok": True}
+
+        def observe(self, **kwargs):
+            return FakeMap()
+
+    conductor = LocalConductor(cdp_backend=FakeBackend())
+
+    result = asyncio.run(
+        conductor.execute(
+            Action(
+                type="type",
+                target_id="cdp:page-1:dom_58",
+                payload={"text": "hello world"},
+            )
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["element_state"]["id"] == "cdp:page-1:dom_58"
+    assert result["element_state"]["value"] == "hello world"
 
 
 def test_local_conductor_routes_navigate_to_cdp_backend():
