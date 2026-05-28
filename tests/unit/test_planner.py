@@ -350,6 +350,96 @@ def test_planner_executes_textual_tool_call_wrapped_in_tools_tags():
     assert result["tool_trace"][0]["source"] == "text_tool_call"
 
 
+def test_planner_resolves_textual_tool_call_alias_with_extra_spaces():
+    semantic_map = SemanticMap(
+        timestamp="2026-05-24T20:00:00Z",
+        focused_window="cdp:notion:UUID-N",
+        windows=[
+            {
+                "id": "cdp:notion:UUID-N",
+                "app": "Notion",
+                "title": "My page",
+                "backend": "cdp",
+                "focused": True,
+                "minimized": False,
+                "bounds": [0, 0, 800, 600],
+                "root_elements": ["cdp:UUID-N:dom_58"],
+            }
+        ],
+        elements={
+            "cdp:UUID-N:dom_58": {
+                "id": "cdp:UUID-N:dom_58",
+                "role": "button",
+                "name": "New page",
+                "value": None,
+                "bounds": [0, 0, 10, 10],
+                "enabled": True,
+                "focused": False,
+                "actions": ["invoke"],
+                "children": [],
+            }
+        },
+        clipboard=None,
+    ).model_dump_json()
+    client = FakeOllamaClient(
+        [
+            FakeResponse(
+                [
+                    FakeChoice(
+                        "stop",
+                        FakeMessage(
+                            content=(
+                                '<tools>\n{"name": "invoke", "arguments": '
+                                '{"target_id": " notion:btn_1"}}\n</tools>'
+                            )
+                        ),
+                    )
+                ]
+            ),
+            FakeResponse([FakeChoice("stop", FakeMessage(content="Done"))]),
+        ]
+    )
+    conductor = SequencedStateConductor([semantic_map, semantic_map])
+    planner = OllamaPlanner(client=client, conductor=conductor, executor=InlineExecutor())
+
+    result = asyncio.run(planner.run_task("click the Notion button"))
+
+    assert result["status"] == "complete"
+    assert conductor.actions == [
+        Action(type="invoke", target_id="cdp:UUID-N:dom_58", payload=None)
+    ]
+
+
+def test_planner_normalizes_cdp_target_id_spaces_before_executing_textual_tool_call():
+    client = FakeOllamaClient(
+        [
+            FakeResponse(
+                [
+                    FakeChoice(
+                        "stop",
+                        FakeMessage(
+                            content=(
+                                '<tools>\n{"name": "focus_window", "arguments": '
+                                '{"target_id": "cdp: discord:PAGE-2"}}\n</tools>'
+                            )
+                        ),
+                    )
+                ]
+            ),
+            FakeResponse([FakeChoice("stop", FakeMessage(content="Done"))]),
+        ]
+    )
+    conductor = FakeConductor()
+    planner = OllamaPlanner(client=client, conductor=conductor, executor=InlineExecutor())
+
+    result = asyncio.run(planner.run_task("switch to Discord"))
+
+    assert result["status"] == "complete"
+    assert conductor.actions == [
+        Action(type="focus_window", target_id="cdp:discord:PAGE-2", payload=None)
+    ]
+
+
 def test_planner_resolves_compact_target_alias_before_executing_action():
     semantic_map = SemanticMap(
         timestamp="2026-05-24T20:00:00Z",

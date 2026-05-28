@@ -336,10 +336,17 @@ def _action_from_text_tool_call(text: str) -> tuple[str, Action] | None:
 def _resolve_action_target_alias(action: Action, aliases: dict[str, str]) -> Action:
     if not action.target_id:
         return action
-    real_target = aliases.get(action.target_id)
+    target_id = _normalize_target_id(action.target_id)
+    real_target = aliases.get(target_id)
     if real_target is None:
+        if target_id != action.target_id:
+            return action.model_copy(update={"target_id": target_id})
         return action
     return action.model_copy(update={"target_id": real_target})
+
+
+def _normalize_target_id(target_id: str) -> str:
+    return re.sub(r"\s*:\s*", ":", target_id.strip())
 
 
 class OllamaPlanner:
