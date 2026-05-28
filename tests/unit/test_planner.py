@@ -67,7 +67,10 @@ class FakeOllamaClient:
 
     def create_completion(self, **kwargs):
         self.calls.append(kwargs)
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
 
 
 class NeverCompletesExecutor(concurrent.futures.Executor):
@@ -671,6 +674,30 @@ def test_timeout_guard_interrupts_stuck_llm_call():
 
     assert result["status"] == "timeout"
     assert result["turns"] == 0
+
+
+def test_timeout_guard_catches_client_request_timeout_after_actions_ran():
+    tool = tool_call(
+        "focus_window",
+        {"type": "focus_window", "target_id": "cdp:notion:page-2"},
+    )
+    planner = OllamaPlanner(
+        client=FakeOllamaClient(
+            [
+                FakeResponse([FakeChoice("tool_calls", FakeMessage(tool_calls=[tool]))]),
+                RuntimeError("Request timed out."),
+            ]
+        ),
+        conductor=FakeConductor(),
+        executor=InlineExecutor(),
+    )
+
+    result = asyncio.run(planner.run_task("timeout"))
+
+    assert result["status"] == "timeout"
+    assert result["turns"] == 1
+    assert "Request timed out." in result["message"]
+    assert result["tool_trace"][0]["name"] == "focus_window"
 
 
 def test_format_state_for_llm_labels_active_and_background():

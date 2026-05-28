@@ -442,6 +442,20 @@ class OllamaPlanner:
                     if tool_trace:
                         result["tool_trace"] = tool_trace
                     return result
+                except Exception as exc:
+                    if not _is_request_timeout_error(exc):
+                        raise
+                    result = {
+                        "status": "timeout",
+                        "turns": turn,
+                        "elapsed_seconds": round(self.monotonic() - start, 2),
+                        "total_prompt_tokens": total_prompt_tokens,
+                        "total_completion_tokens": total_completion_tokens,
+                        "message": f"Planner request timed out while waiting for the model response: {exc}",
+                    }
+                    if tool_trace:
+                        result["tool_trace"] = tool_trace
+                    return result
                 llm_end = self.monotonic()
                 llm_elapsed = llm_end - llm_start
                 elapsed_total = llm_end - start
@@ -714,6 +728,12 @@ def _print_run_summary(result: dict[str, Any]) -> None:
         f"--------------------------------------------------",
         flush=True,
     )
+
+
+def _is_request_timeout_error(exc: Exception) -> bool:
+    class_name = type(exc).__name__.lower()
+    message = str(exc).lower()
+    return "timeout" in class_name or "timed out" in message
 
 
 def _guard_action_against_task(
