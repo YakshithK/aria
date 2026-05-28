@@ -300,6 +300,37 @@ def action_from_tool_call(tool_call: Any) -> Action:
     return Action(**arguments)
 
 
+def _action_from_text_tool_call(text: str) -> tuple[str, Action] | None:
+    if not text:
+        return None
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.strip("`").strip()
+        if stripped.lower().startswith("json"):
+            stripped = stripped[4:].strip()
+    try:
+        data = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    raw_name = data.get("name")
+    arguments = data.get("arguments")
+    if not isinstance(raw_name, str) or not isinstance(arguments, dict):
+        return None
+    name = raw_name.lstrip(".")
+    arguments = dict(arguments)
+    arguments.setdefault("type", name)
+    payload = arguments.get("payload")
+    if payload is not None and not isinstance(payload, dict):
+        arguments["payload"] = None
+    try:
+        action = Action(**arguments)
+    except Exception:
+        return None
+    return name, action
+
+
 def _resolve_action_target_alias(action: Action, aliases: dict[str, str]) -> Action:
     if not action.target_id:
         return action
@@ -425,6 +456,40 @@ class OllamaPlanner:
                         "total_prompt_tokens": total_prompt_tokens,
                         "total_completion_tokens": total_completion_tokens,
                     }
+                    text_tool_action = _action_from_text_tool_call(model_text)
+                    if text_tool_action is not None:
+                        action_name, action = text_tool_action
+                        action = _resolve_action_target_alias(action, known_target_aliases)
+                        result = _guard_action_against_task(task, semantic_map, action)
+                        if result is None:
+                            result = await self.conductor.execute(action)
+                        if _has_failed_tool_result(result):
+                            had_failed_tool_result = True
+                        elif _is_write_action(action):
+                            pending_write = _pending_write_from_action(action)
+                            if pending_write is not None:
+                                pending_write_verifications.append(pending_write)
+                        result_text = str(result)
+                        tool_trace.append(
+                            {
+                                "name": action_name,
+                                "action": action.model_dump(),
+                                "result": result_text,
+                                "source": "text_tool_call",
+                            }
+                        )
+                        history.append(
+                            {
+                                "role": "assistant",
+                                "content": (
+                                    "The previous response contained a tool call as "
+                                    "plain text instead of using the tool API. Aria "
+                                    f"executed {action_name}."
+                                ),
+                            }
+                        )
+                        history.append({"role": "user", "content": _summarize_turn(turn, formatted_state, [result_text])})
+                        continue
                     if not tool_trace and not model_text:
                         return {"status": "no_action", "turns": turn + 1, "reason": "model_gave_empty_response_without_using_tools", **token_summary}
                     if had_failed_tool_result:
