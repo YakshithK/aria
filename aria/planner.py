@@ -380,6 +380,7 @@ class OllamaPlanner:
         last_action_key: tuple[str, str | None] | None = None
         repeated_action_count = 0
         recent_action_keys: deque[tuple[str, str | None]] = deque(maxlen=6)
+        warned_focus_oscillation = False
         had_failed_tool_result = False
         pending_write_verifications: list[dict[str, Any]] = []
         known_target_aliases: dict[str, str] = {}
@@ -571,8 +572,9 @@ class OllamaPlanner:
                     else:
                         last_action_key = action_key
                         repeated_action_count = 1
-                    # Detect A→B→A→B oscillation (2 alternating actions, never same twice)
-                    # Check last 4 actions so guard fires before model self-stops
+                    # Detect A→B→A→B oscillation (2 alternating actions, never same twice).
+                    # Focus-window alternation can still recover in cross-app tasks, so warn
+                    # once instead of hard-stopping the run.
                     if len(recent_action_keys) >= 4:
                         last_four = list(recent_action_keys)[-4:]
                         unique = set(last_four)
@@ -580,22 +582,38 @@ class OllamaPlanner:
                             pairs = last_four
                             if all(pairs[i] != pairs[i + 1] for i in range(3)):
                                 key_a, key_b = unique
-                                return {
-                                    "status": "stalled",
-                                    "turns": turn + 1,
-                                    "reason": "oscillating_actions",
-                                    "elapsed_seconds": round(self.monotonic() - start, 2),
-                                    "total_prompt_tokens": total_prompt_tokens,
-                                    "total_completion_tokens": total_completion_tokens,
-                                    "message": (
-                                        f"Planner oscillated between "
-                                        f"{key_a[0]} on {key_a[1]} and "
-                                        f"{key_b[0]} on {key_b[1]} without progress. "
-                                        "If you cannot find a text block to write into, "
-                                        "invoke any visible element to place focus first."
-                                    ),
-                                    "tool_trace": tool_trace,
-                                }
+                                if key_a[0] == key_b[0] == "focus_window":
+                                    if not warned_focus_oscillation:
+                                        warned_focus_oscillation = True
+                                        history.append({
+                                            "role": "user",
+                                            "content": (
+                                                "Notice: you are alternating between two "
+                                                "apps without doing work. Stop switching. "
+                                                "Use the current ACTIVE app's visible "
+                                                "elements now: if it is Notion, invoke or "
+                                                "write_to a textbox; if it is Discord, use "
+                                                "the visible/cached content already in the "
+                                                "conversation history."
+                                            ),
+                                        })
+                                else:
+                                    return {
+                                        "status": "stalled",
+                                        "turns": turn + 1,
+                                        "reason": "oscillating_actions",
+                                        "elapsed_seconds": round(self.monotonic() - start, 2),
+                                        "total_prompt_tokens": total_prompt_tokens,
+                                        "total_completion_tokens": total_completion_tokens,
+                                        "message": (
+                                            f"Planner oscillated between "
+                                            f"{key_a[0]} on {key_a[1]} and "
+                                            f"{key_b[0]} on {key_b[1]} without progress. "
+                                            "If you cannot find a text block to write into, "
+                                            "invoke any visible element to place focus first."
+                                        ),
+                                        "tool_trace": tool_trace,
+                                    }
                     if repeated_action_count >= 4:
                         return {
                             "status": "stalled",

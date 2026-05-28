@@ -907,7 +907,7 @@ def test_guard_rejects_placeholder_credentials():
     assert result["reason"] == "placeholder_credentials"
 
 
-def test_oscillating_actions_stops_with_diagnostic():
+def test_focus_window_oscillation_warns_and_allows_recovery():
     notion_focus = tool_call(
         "focus_window",
         {"type": "focus_window", "target_id": "cdp:notion:PAGE-1"},
@@ -918,25 +918,41 @@ def test_oscillating_actions_stops_with_diagnostic():
         {"type": "focus_window", "target_id": "cdp:discord:PAGE-2"},
         tool_call_id="call-b",
     )
+    write_tool = tool_call(
+        "write_to",
+        {
+            "type": "write_to",
+            "target_id": "cdp:page-1:dom_1",
+            "payload": {"text": "done"},
+        },
+        tool_call_id="call-c",
+    )
     client = FakeOllamaClient(
         [
             FakeResponse([FakeChoice("tool_calls", FakeMessage(tool_calls=[notion_focus]))]),
             FakeResponse([FakeChoice("tool_calls", FakeMessage(tool_calls=[discord_focus]))]),
             FakeResponse([FakeChoice("tool_calls", FakeMessage(tool_calls=[notion_focus]))]),
             FakeResponse([FakeChoice("tool_calls", FakeMessage(tool_calls=[discord_focus]))]),
+            FakeResponse([FakeChoice("tool_calls", FakeMessage(tool_calls=[write_tool]))]),
+            FakeResponse([FakeChoice("stop", FakeMessage(content="Done"))]),
         ]
     )
+    conductor = FakeConductor()
     planner = OllamaPlanner(
         client=client,
-        conductor=FakeConductor(),
+        conductor=conductor,
         executor=InlineExecutor(),
     )
 
     result = asyncio.run(planner.run_task("write to notion"))
 
-    assert result["status"] == "stalled"
-    assert result["reason"] == "oscillating_actions"
-    assert result["turns"] == 4
+    assert result["status"] == "complete"
+    assert result["turns"] == 6
+    assert conductor.actions[-1] == Action(
+        type="write_to",
+        target_id="cdp:page-1:dom_1",
+        payload={"text": "done"},
+    )
 
 
 def test_guard_allows_misspelled_discord_channel_name():
