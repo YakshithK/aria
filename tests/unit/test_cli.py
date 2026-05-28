@@ -199,3 +199,34 @@ def test_run_command_connects_to_explicit_apps(monkeypatch):
     assert len(connected_backends) == 2
     assert connected_backends[0].port == 9224
     assert connected_backends[1].port == 9225
+
+
+def test_discover_backends_auto_launches_missing_explicit_app(monkeypatch):
+    launches = []
+    readiness = iter([False, True])
+
+    monkeypatch.setattr("aria.__main__.cdp_port_ready", lambda port: next(readiness))
+    monkeypatch.setattr(
+        "aria.__main__.launch_app",
+        lambda app_name: launches.append(app_name) or {"ok": True, "app": "Discord", "port": 9224, "pid": 1234},
+    )
+    monkeypatch.setattr("aria.__main__.wait_for_cdp_port", lambda port, timeout_s=10.0: True)
+    monkeypatch.setattr("aria.__main__.app_process_running", lambda app_name: False)
+
+    backends = __import__("aria.__main__", fromlist=["_discover_backends"])._discover_backends(["discord"])
+
+    assert launches == ["discord"]
+    assert len(backends) == 1
+    assert backends[0].app == "Discord"
+    assert backends[0].port == 9224
+
+
+def test_discover_backends_rejects_running_app_without_debug_port(monkeypatch):
+    monkeypatch.setattr("aria.__main__.cdp_port_ready", lambda port: False)
+    monkeypatch.setattr("aria.__main__.app_process_running", lambda app_name: True)
+
+    result = CliRunner().invoke(app, ["run", "--app", "discord", "do it"])
+
+    assert result.exit_code == 1
+    assert "Discord is already running without CDP" in result.stdout
+    assert "aria launch discord --restart" in result.stdout

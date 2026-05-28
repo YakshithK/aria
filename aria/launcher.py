@@ -3,9 +3,13 @@ from __future__ import annotations
 import subprocess
 import os
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import httpx
+import psutil
 
 
 class UnsupportedAppError(ValueError):
@@ -18,6 +22,9 @@ class LaunchSpec:
     port: int
     commands: list[list[str]]
     process_names: list[str]
+    launch_flags: list[str]
+    lookup_strategy: str
+    process_detection: str = "process_name"
 
 
 LAUNCH_SPECS = {
@@ -37,6 +44,8 @@ LAUNCH_SPECS = {
             ],
         ],
         process_names=["Code.exe"],
+        launch_flags=["--remote-debugging-port=9223"],
+        lookup_strategy="path_or_known_install_paths",
     ),
     "discord": LaunchSpec(
         app="Discord",
@@ -52,6 +61,8 @@ LAUNCH_SPECS = {
             ["Discord.exe", "--remote-debugging-port=9224"],
         ],
         process_names=["Discord.exe"],
+        launch_flags=["--remote-debugging-port=9224"],
+        lookup_strategy="squirrel_update_or_path",
     ),
     "notion": LaunchSpec(
         app="Notion",
@@ -61,6 +72,8 @@ LAUNCH_SPECS = {
             ["Notion.exe", "--remote-debugging-port=9225"],
         ],
         process_names=["Notion.exe"],
+        launch_flags=["--remote-debugging-port=9225"],
+        lookup_strategy="known_install_paths_or_path",
     ),
 }
 
@@ -103,6 +116,44 @@ def terminate_app(app_name: str) -> None:
             stderr=subprocess.DEVNULL,
             check=False,
         )
+
+
+def app_process_running(app_name: str) -> bool:
+    normalized_app = app_name.lower()
+    spec = LAUNCH_SPECS.get(normalized_app)
+    if spec is None:
+        raise UnsupportedAppError(f"Unsupported launch app: {app_name}")
+    expected = {name.lower() for name in spec.process_names}
+    for proc in psutil.process_iter(["name"]):
+        try:
+            name = str(proc.info.get("name") or "").lower()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+        if name in expected:
+            return True
+    return False
+
+
+def cdp_port_ready(port: int, *, timeout: float = 1.0) -> bool:
+    try:
+        httpx.get(f"http://127.0.0.1:{port}/json/list", timeout=timeout).raise_for_status()
+    except Exception:
+        return False
+    return True
+
+
+def wait_for_cdp_port(
+    port: int,
+    *,
+    timeout_s: float = 10.0,
+    interval_s: float = 0.25,
+) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if cdp_port_ready(port):
+            return True
+        time.sleep(interval_s)
+    return cdp_port_ready(port)
 
 
 def launch_app(app_name: str, *, restart: bool = False) -> dict[str, Any]:

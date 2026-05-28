@@ -89,6 +89,14 @@ uv run aria launch discord --restart
 uv run aria launch notion --restart
 ```
 
+For explicit apps, `aria run --app ...` now launches missing supported apps automatically
+and waits for their CDP ports. If an app is already running without CDP enabled, restart
+it through Aria:
+
+```powershell
+uv run aria launch discord --restart
+```
+
 Observe an app:
 
 ```powershell
@@ -119,7 +127,8 @@ targets before executing actions.
 - Windows only.
 - No screenshot fallback.
 - Apps must be launched with CDP debug ports.
-- Already-running Electron apps cannot be attached after the fact without restarting.
+- Missing supported apps are auto-launched by `aria run --app ...`; already-running
+  Electron apps still need restart if they were started without CDP.
 - Discord and Notion navigation are still staged for the current demo.
 - UIA/native Windows app support is planned but not shipped.
 - Canvas, WebGL, games, and custom-rendered surfaces are unsupported.
@@ -138,4 +147,3 @@ Immediate next product work:
 
 Unit tests currently cover the model schema, planner loop, CDP parsing, launcher, and
 local conductor behavior. Smoke tests require live Windows apps and are not part of CI.
-

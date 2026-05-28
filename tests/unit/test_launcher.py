@@ -4,10 +4,13 @@ from pathlib import Path
 from aria.launcher import (
     LAUNCH_SPECS,
     UnsupportedAppError,
+    app_process_running,
+    cdp_port_ready,
     launch_app,
     resolve_command,
     resolve_launch_cwd,
     terminate_app,
+    wait_for_cdp_port,
 )
 
 
@@ -33,6 +36,9 @@ def test_launch_specs_have_stable_ports(app_name, app, port):
     assert spec.app == app
     assert spec.port == port
     assert spec.process_names
+    assert spec.launch_flags
+    assert spec.lookup_strategy
+    assert spec.process_detection == "process_name"
 
 
 def test_resolve_command_uses_first_available_candidate(monkeypatch):
@@ -186,3 +192,44 @@ def test_resolve_launch_cwd_prefers_userprofile(monkeypatch):
 def test_launch_app_rejects_unsupported_app():
     with pytest.raises(UnsupportedAppError, match="Unsupported launch app"):
         launch_app("unknown")
+
+
+def test_app_process_running_matches_configured_process_names(monkeypatch):
+    class FakeProc:
+        def __init__(self, name):
+            self.info = {"name": name}
+
+    monkeypatch.setattr(
+        "aria.launcher.psutil.process_iter",
+        lambda attrs: [FakeProc("Discord.exe"), FakeProc("Other.exe")],
+    )
+
+    assert app_process_running("discord") is True
+    assert app_process_running("notion") is False
+
+
+def test_cdp_port_ready_checks_json_list(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            calls.append("ok")
+
+    monkeypatch.setattr(
+        "aria.launcher.httpx.get",
+        lambda url, timeout: calls.append((url, timeout)) or FakeResponse(),
+    )
+
+    assert cdp_port_ready(9224) is True
+    assert calls == [("http://127.0.0.1:9224/json/list", 1.0), "ok"]
+
+
+def test_wait_for_cdp_port_polls_until_ready(monkeypatch):
+    ready_values = iter([False, False, True])
+    sleeps = []
+
+    monkeypatch.setattr("aria.launcher.cdp_port_ready", lambda port: next(ready_values))
+    monkeypatch.setattr("aria.launcher.time.sleep", lambda seconds: sleeps.append(seconds))
+
+    assert wait_for_cdp_port(9224, timeout_s=2.0, interval_s=0.1) is True
+    assert sleeps == [0.1, 0.1]

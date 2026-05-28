@@ -1,6 +1,5 @@
 import asyncio
 
-import httpx
 from rich.console import Console
 from rich.table import Table
 import typer
@@ -8,7 +7,13 @@ import typer
 from aria.backends.cdp import CDPBackend
 from aria.conductor.local import LocalConductor
 from aria.conductor.registry import WindowRegistry
-from aria.launcher import LAUNCH_SPECS, launch_app
+from aria.launcher import (
+    LAUNCH_SPECS,
+    app_process_running,
+    cdp_port_ready,
+    launch_app,
+    wait_for_cdp_port,
+)
 from aria.planner import OllamaPlanner
 
 app = typer.Typer(help="CUA Windows semantic computer-use agent.")
@@ -91,17 +96,31 @@ def _discover_backends(requested: list[str]) -> list[CDPBackend]:
             if port is None:
                 console.print(f"[red]Unsupported app:[/red] {name}")
                 raise typer.Exit(1)
+            if not cdp_port_ready(port):
+                if normalized in LAUNCH_SPECS and app_process_running(normalized):
+                    console.print(
+                        f"[red]Error:[/red] {APP_NAMES[normalized]} is already running without CDP. "
+                        f"Restart it with `aria launch {normalized} --restart`.",
+                        soft_wrap=True,
+                    )
+                    raise typer.Exit(1)
+                if normalized in LAUNCH_SPECS:
+                    console.print(f"[dim]Launching {APP_NAMES[normalized]} with CDP port {port}[/dim]")
+                    launch_app(normalized)
+                    if not wait_for_cdp_port(port, timeout_s=10.0):
+                        console.print(
+                            f"[red]Error:[/red] {APP_NAMES[normalized]} did not expose CDP "
+                            f"on port {port} within 10s."
+                        )
+                        raise typer.Exit(1)
             backends.append(CDPBackend(port=port, app=APP_NAMES[normalized]))
         return backends
 
     # Auto-discover: include every port that responds to /json/list
     backends = []
     for name, port in CDP_PORTS.items():
-        try:
-            httpx.get(f"http://127.0.0.1:{port}/json/list", timeout=1.0).raise_for_status()
+        if cdp_port_ready(port):
             backends.append(CDPBackend(port=port, app=APP_NAMES[name]))
-        except Exception:
-            pass
     if not backends:
         console.print("[red]Error:[/red] No running CDP apps found. Launch apps first with `aria launch <app>`.")
         raise typer.Exit(1)
