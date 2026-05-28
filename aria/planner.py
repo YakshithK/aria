@@ -310,12 +310,10 @@ def _action_from_text_tool_call(text: str) -> tuple[str, Action] | None:
         stripped = stripped.strip("`").strip()
         if stripped.lower().startswith("json"):
             stripped = stripped[4:].strip()
-    try:
-        data = json.loads(stripped)
-    except json.JSONDecodeError:
+    data = _load_first_json_object(stripped)
+    if data is None:
         return None
-    if not isinstance(data, dict):
-        return None
+    data = {str(key).strip(): value for key, value in data.items()}
     raw_name = data.get("name")
     arguments = data.get("arguments")
     if not isinstance(raw_name, str) or not isinstance(arguments, dict):
@@ -331,6 +329,19 @@ def _action_from_text_tool_call(text: str) -> tuple[str, Action] | None:
     except Exception:
         return None
     return name, action
+
+
+def _load_first_json_object(text: str) -> dict[str, Any] | None:
+    start = text.find("{")
+    if start < 0:
+        return None
+    try:
+        data, _end = json.JSONDecoder().raw_decode(text[start:])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
 
 
 def _resolve_action_target_alias(action: Action, aliases: dict[str, str]) -> Action:

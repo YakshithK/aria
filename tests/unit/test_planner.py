@@ -389,6 +389,60 @@ def test_planner_executes_textual_tool_call_wrapped_in_spaced_tools_tags():
     assert result["tool_trace"][0]["source"] == "text_tool_call"
 
 
+def test_planner_executes_textual_tool_call_with_spaced_top_level_keys_and_extra_fence():
+    semantic_map = SemanticMap(
+        timestamp="2026-05-24T20:00:00Z",
+        focused_window="cdp:notion:UUID-N",
+        windows=[
+            {
+                "id": "cdp:notion:UUID-N",
+                "app": "Notion",
+                "title": "My page",
+                "backend": "cdp",
+                "focused": True,
+                "minimized": False,
+                "bounds": [0, 0, 800, 600],
+                "root_elements": ["cdp:UUID-N:dom_58"],
+            }
+        ],
+        elements={
+            "cdp:UUID-N:dom_58": {
+                "id": "cdp:UUID-N:dom_58",
+                "role": "link",
+                "name": "Open page",
+                "value": "https://notion.so/page",
+                "bounds": [0, 0, 10, 10],
+                "enabled": True,
+                "focused": False,
+                "actions": ["invoke"],
+                "children": [],
+            }
+        },
+        clipboard=None,
+    ).model_dump_json()
+    content = (
+        '{" name": "invoke", " arguments": {" target_id": " notion: lnk_1 "}}\n'
+        '```json\n{" name": "invoke", " arguments": {" target_id": " notion: lnk_1 "}}\n```'
+    )
+    client = FakeOllamaClient(
+        [
+            FakeResponse([FakeChoice("stop", FakeMessage(content=content))]),
+            FakeResponse([FakeChoice("stop", FakeMessage(content="Done"))]),
+        ]
+    )
+    conductor = SequencedStateConductor([semantic_map, semantic_map])
+    planner = OllamaPlanner(client=client, conductor=conductor, executor=InlineExecutor())
+
+    result = asyncio.run(planner.run_task("open the Notion page"))
+
+    assert result["status"] == "complete"
+    assert result["turns"] == 2
+    assert conductor.actions == [
+        Action(type="invoke", target_id="cdp:UUID-N:dom_58", payload=None)
+    ]
+    assert result["tool_trace"][0]["source"] == "text_tool_call"
+
+
 def test_planner_resolves_textual_tool_call_alias_with_extra_spaces():
     semantic_map = SemanticMap(
         timestamp="2026-05-24T20:00:00Z",
