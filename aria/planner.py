@@ -46,6 +46,8 @@ Writing into Notion:
 - Prefer write_to(target_id, text) for writing into an editable target. It invokes and types atomically.
 - The title textbox contains the page name — write your content into the '(text block)' element, not the title.
 - You MUST invoke a textbox before calling type — type requires an active cursor.
+- CRITICAL: If you invoke a link element (role=link) to navigate to a page, do NOT call type or write_to in the same response. Stop after the navigation. The next turn will show the loaded page with its text blocks.
+- If no '(text block)' is visible, the Notion page may not be open. Use invoke on the page link to navigate to it first, then stop and wait for the next turn.
 
 Stop and return done when the task is fully complete."""
 
