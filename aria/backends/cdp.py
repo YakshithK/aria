@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -207,11 +208,20 @@ _CHROME_TITLES = {"tab bar", "new tab", "devtools", "extensions"}
 
 _BLANK_URL_PATTERNS = ("/blank?", "/blank#", "about:blank")
 
+# Notion utility/chrome pages that are never the content page the agent should act on.
+# quick-search is a full-SPA search overlay — if it's open alongside a real page,
+# the real page should always be preferred.
+_NOTION_UTILITY_URL_PATTERNS = ("/quick-search",)
+
 
 def _is_placeholder_target(target: dict[str, Any]) -> bool:
     """Return True for startup/restore/blank page targets that have no real content."""
     url = str(target.get("url", ""))
-    return any(pat in url for pat in _BLANK_URL_PATTERNS)
+    if any(pat in url for pat in _BLANK_URL_PATTERNS):
+        return True
+    if any(pat in url for pat in _NOTION_UTILITY_URL_PATTERNS):
+        return True
+    return False
 
 
 def select_active_target(
@@ -876,6 +886,12 @@ class CDPBackend:
                     **dom_elements,
                 }
                 self._dom_targets.update(dom_targets)
+        if __debug__ and os.environ.get("ARIA_DEBUG_STATE"):
+            import sys
+            print(f"\n[DEBUG {self.app}] url={target.get('url', '?')}", file=sys.stderr)
+            print(f"[DEBUG {self.app}] {len(filtered)} elements:", file=sys.stderr)
+            for eid, el in filtered.items():
+                print(f"  {eid.split(':')[-1]:12s}  role={el.role:12s}  name={el.name[:60]!r}", file=sys.stderr)
         window_id_value = f"cdp:{self.app.lower()}:{target['id']}"
         return SemanticMap(
             timestamp=datetime.now(UTC),
@@ -916,6 +932,7 @@ class CDPBackend:
         candidates = select_targets_ranked(targets, title=title)
         if not candidates:
             raise CDPError("No matching active CDP page target found.")
+
 
         last_map: SemanticMap | None = None
         for candidate in candidates:
@@ -1067,6 +1084,7 @@ def _semantic_map_is_sparse(elements: dict[str, Element], root_ids: list[str]) -
     return len(elements) <= len(root_ids)
 
 
+
 def _with_target_metadata(result: Any, dom_target: dict[str, Any]) -> Any:
     if not isinstance(result, dict):
         return result
@@ -1181,7 +1199,11 @@ _DOM_INTERACTIVE_SCRIPT = r"""
   const interactiveRecords = Array.from(document.querySelectorAll("a[href], button, input, textarea, select, [role='button'], [role='link'], [contenteditable='true']"))
     .filter(el => {
       const rect = el.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0 && !el.disabled && nameFor(el);
+      if (rect.width <= 0 || rect.height <= 0 || el.disabled || !nameFor(el)) return false;
+      // Filter Notion search-popup result links (contain qid= query param) — these are
+      // overlay links that interfere with page content and should never be acted on.
+      if (el.tagName === 'A' && el.href && el.href.includes('qid=')) return false;
+      return true;
     })
     .slice(0, 350)
     .map(el => {
