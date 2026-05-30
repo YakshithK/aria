@@ -200,6 +200,20 @@ def filter_elements(
         for child_id in element.children:
             queue.append((child_id, depth + 1))
 
+    # Drop role=text shadow elements whose names duplicate an interactive element.
+    # Many apps (Discord, Notion) render a visible label node alongside each interactive
+    # node with the same name. The agent can't act on text nodes and the name is already
+    # present on the interactive element, so these are pure token waste.
+    interactive_names = {
+        e.name.strip().lower()
+        for e in filtered.values()
+        if e.actions and e.name
+    }
+    filtered = {
+        eid: el for eid, el in filtered.items()
+        if not (el.role == "text" and el.name and el.name.strip().lower() in interactive_names)
+    }
+
     return filtered
 
 

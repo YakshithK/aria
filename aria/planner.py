@@ -50,6 +50,15 @@ Writing into Notion:
 - CRITICAL: If you invoke a link element (role=link) to navigate to a page, do NOT call type or write_to in the same response. Stop after the navigation. The next turn will show the loaded page with its text blocks.
 - If no '(text block)' is visible, the Notion page may not be open. Use invoke on the page link to navigate to it first, then stop and wait for the next turn.
 
+Navigation recovery:
+- Before reading content from a background app, verify the visible state matches what the task requires. If the active content does not match the target (wrong page, wrong section, wrong context), navigate there first before reading or acting.
+- If the target location is not visible in the current state, look for a navigation button (role=button with a name like "Find", "Search", "Go to", or "Find or start a conversation"). Invoke that button first — it opens a search modal with a focused input. Then type the target name in the next turn, then invoke the result.
+- CRITICAL: Never write_to or set_value on a textbox as your first navigation action. A textbox already visible on screen is an in-page filter, not a navigation input. The navigation input only appears AFTER you invoke the navigation button. Invoke the button first, always.
+- If you have switched focus more than once without taking a read or write action, stop switching. Emit done=false with a structured failure describing what you were looking for and what the state showed instead.
+
+Completion check:
+- Before calling done=true on any task that required writing, verify your tool history contains a successful write_to or type action. If no write occurred, you are not done — emit done=false with a description of what was missing.
+
 Stop and return done when the task is fully complete."""
 
 
@@ -683,6 +692,11 @@ class OllamaPlanner:
                 # without appending the full DOM dump (which bloats prompt tokens ~4k/turn).
                 history.append({"role": "user", "content": _summarize_turn(turn, formatted_state, tool_results)})
                 append_tool_history(history, choice.message, tool_results)
+                # Prune oldest turns to keep history within ~15 turns (2 entries each).
+                # Without this, history grows ~300-600 tokens/turn and overflows by turn 25.
+                max_history_entries = 30
+                if len(history) > max_history_entries:
+                    history = history[-max_history_entries:]
 
             result = {
                 "status": "max_turns",
@@ -1015,10 +1029,26 @@ def _channels_match(requested: str, channel_name: str) -> bool:
     return False
 
 
-def _action_hint(role: str, actions: list[str], value: str) -> str:
+_NAV_TRIGGER_NAMES = frozenset({
+    "find or start a conversation",
+    "find",
+    "go to",
+    "quick switcher",
+    "open quick switcher",
+    "search channels",
+})
+
+
+def _is_navigation_trigger(role: str, name: str) -> bool:
+    return role == "button" and name.lower().strip() in _NAV_TRIGGER_NAMES
+
+
+def _action_hint(role: str, actions: list[str], value: str, name: str = "") -> str:
     if role == "link":
         return "invoke to navigate"
     if role in ("button", "menuitem"):
+        if _is_navigation_trigger(role, name):
+            return "invoke to open navigation search — then type target in next turn"
         return "invoke to click"
     if role in ("textbox",) or "setvalue" in actions:
         return "write_to to write text"
@@ -1091,7 +1121,9 @@ def _format_state_for_llm_with_aliases(json_str: str) -> tuple[str, dict[str, st
                         actions: list[str] = el.get("actions") or []
                         focused: bool = el.get("focused", False)
 
-                        hint = _action_hint(role, actions, value)
+                        hint = _action_hint(role, actions, value, name)
+                        if role == "textbox" and not focused and name.lower() in ("search", "find"):
+                            hint = "in-page filter only — NOT a navigation input"
                         display = name if name else "(text block)" if role == "textbox" else "(unnamed)"
                         alias = next(
                             alias for alias, real_id in alias_by_real.items() if real_id == eid
