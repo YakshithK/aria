@@ -78,7 +78,53 @@ LAUNCH_SPECS = {
 }
 
 
-def resolve_command(commands: list[list[str]]) -> list[str]:
+def _exe_from_running_process(process_names: list[str]) -> str | None:
+    """Return the executable path of a currently running process matching any of the given names."""
+    expected = {name.lower() for name in process_names}
+    for proc in psutil.process_iter(["name", "exe"]):
+        try:
+            name = str(proc.info.get("name") or "").lower()
+            if name in expected:
+                exe = proc.info.get("exe")
+                if exe:
+                    return exe
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return None
+
+
+def _command_from_live_exe(exe_path: str, spec: LaunchSpec) -> list[str] | None:
+    """
+    Build a launch command from the actual running exe path.
+    For Squirrel apps (Discord), the running exe is inside app-x.y.z/;
+    Update.exe lives one level up.
+    """
+    exe = Path(exe_path)
+    if spec.lookup_strategy == "squirrel_update_or_path":
+        update_exe = exe.parent.parent / "Update.exe"
+        if update_exe.exists():
+            return [
+                str(update_exe),
+                "--processStart",
+                spec.process_names[0],
+                "--process-start-args",
+                f"--remote-debugging-port={spec.port}",
+            ]
+    else:
+        if exe.exists():
+            return [str(exe), *spec.launch_flags]
+    return None
+
+
+def resolve_command(commands: list[list[str]], spec: LaunchSpec | None = None) -> list[str]:
+    # Live process path is the most reliable source — works for any install location.
+    if spec is not None:
+        live_exe = _exe_from_running_process(spec.process_names)
+        if live_exe:
+            cmd = _command_from_live_exe(live_exe, spec)
+            if cmd:
+                return cmd
+
     for command in commands:
         executable = os.path.expandvars(command[0])
         resolved_path = shutil.which(executable)
@@ -86,7 +132,7 @@ def resolve_command(commands: list[list[str]]) -> list[str]:
             return [resolved_path, *command[1:]]
         if Path(executable).exists():
             return [executable, *command[1:]]
-    return commands[0]
+    return [os.path.expandvars(commands[0][0]), *commands[0][1:]]
 
 
 def _is_directly_launchable(path: str) -> bool:
@@ -162,10 +208,13 @@ def launch_app(app_name: str, *, restart: bool = False) -> dict[str, Any]:
     if spec is None:
         raise UnsupportedAppError(f"Unsupported launch app: {app_name}")
 
+    # Resolve command while the process may still be running — captures the live exe path
+    # before terminate_app() kills it, so restart reuses the same install location.
+    command = resolve_command(spec.commands, spec)
+
     if restart:
         terminate_app(normalized_app)
 
-    command = resolve_command(spec.commands)
     process = subprocess.Popen(
         command,
         cwd=resolve_launch_cwd(),
