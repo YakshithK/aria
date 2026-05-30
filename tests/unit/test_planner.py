@@ -3,6 +3,8 @@ import concurrent.futures
 import json
 from dataclasses import dataclass
 
+import pytest
+
 from aria.models import Action, SemanticMap
 from aria.planner import (
     OLLAMA_BASE_URL,
@@ -19,6 +21,11 @@ from aria.planner import (
     action_from_tool_call,
     tool_schemas_by_name,
 )
+
+
+@pytest.fixture(autouse=True)
+def no_real_trace_writes(monkeypatch):
+    monkeypatch.setattr("aria.planner.write_trace", lambda result, task, tool_trace: None)
 
 
 def empty_semantic_map_json():
@@ -299,6 +306,62 @@ def test_run_task_calls_on_action_after_each_completed_tool_action():
 
     assert result["status"] == "complete"
     assert events == [
+        {
+            "turn": 1,
+            "action": "set_value",
+            "target_id": "cdp:page:nodeId_2",
+            "ok": True,
+        }
+    ]
+
+
+def test_run_task_writes_trace_on_terminal_result(monkeypatch):
+    client = FakeOllamaClient(
+        [FakeResponse([FakeChoice("stop", FakeMessage(content="Done"))])]
+    )
+    planner = OllamaPlanner(
+        client=client,
+        conductor=FakeConductor(),
+        executor=InlineExecutor(),
+    )
+    writes = []
+    monkeypatch.setattr(
+        "aria.planner.write_trace",
+        lambda result, task, tool_trace: writes.append((result, task, tool_trace)),
+    )
+
+    result = asyncio.run(planner.run_task("do it"))
+
+    assert result["status"] == "complete"
+    assert writes == [(result, "do it", [])]
+
+
+def test_run_task_trace_uses_compact_action_events(monkeypatch):
+    tool = tool_call(
+        "set_value",
+        {"type": "set_value", "target_id": "cdp:page:nodeId_2", "payload": {"text": "hi"}},
+    )
+    client = FakeOllamaClient(
+        [
+            FakeResponse([FakeChoice("tool_calls", FakeMessage(tool_calls=[tool]))]),
+            FakeResponse([FakeChoice("stop", FakeMessage(content="Done"))]),
+        ]
+    )
+    planner = OllamaPlanner(
+        client=client,
+        conductor=FakeConductor(),
+        executor=InlineExecutor(),
+    )
+    writes = []
+    monkeypatch.setattr(
+        "aria.planner.write_trace",
+        lambda result, task, tool_trace: writes.append((result, task, tool_trace)),
+    )
+
+    result = asyncio.run(planner.run_task("type hi"))
+
+    assert result["status"] == "complete"
+    assert writes[0][2] == [
         {
             "turn": 1,
             "action": "set_value",

@@ -12,6 +12,7 @@ from typing import Any, Protocol
 from openai import OpenAI
 
 from aria.models import Action
+from aria.traces import write_trace
 
 
 OLLAMA_MODEL = "qwen3-next:80b-cloud"
@@ -391,6 +392,7 @@ class OllamaPlanner:
     ) -> dict[str, Any]:
         history: list[dict[str, Any]] = []
         tool_trace: list[dict[str, Any]] = []
+        action_trace: list[dict[str, Any]] = []
         last_action_key: tuple[str, str | None] | None = None
         repeated_action_count = 0
         recent_action_keys: deque[tuple[str, str | None]] = deque(maxlen=6)
@@ -401,6 +403,13 @@ class OllamaPlanner:
         start = self.monotonic()
         total_prompt_tokens = 0
         total_completion_tokens = 0
+
+        def finish(result: dict[str, Any]) -> dict[str, Any]:
+            try:
+                write_trace(result, task, action_trace)
+            except Exception:
+                pass
+            return result
 
         try:
             for turn in range(max_turns):
@@ -415,7 +424,7 @@ class OllamaPlanner:
                     }
                     if tool_trace:
                         result["tool_trace"] = tool_trace
-                    return result
+                    return finish(result)
 
                 semantic_map = await self.conductor.get_current_state(scope="focused+registry")
                 formatted_state, target_aliases = _format_state_for_llm_with_aliases(semantic_map)
@@ -455,7 +464,7 @@ class OllamaPlanner:
                     }
                     if tool_trace:
                         result["tool_trace"] = tool_trace
-                    return result
+                    return finish(result)
                 except Exception as exc:
                     if not _is_request_timeout_error(exc):
                         raise
@@ -469,7 +478,7 @@ class OllamaPlanner:
                     }
                     if tool_trace:
                         result["tool_trace"] = tool_trace
-                    return result
+                    return finish(result)
                 llm_end = self.monotonic()
                 llm_elapsed = llm_end - llm_start
                 elapsed_total = llm_end - start
@@ -516,7 +525,7 @@ class OllamaPlanner:
                                 "source": "text_tool_call",
                             }
                         )
-                        _emit_action_event(on_action, turn + 1, action, result)
+                        action_trace.append(_emit_action_event(on_action, turn + 1, action, result))
                         history.append(
                             {
                                 "role": "assistant",
@@ -530,7 +539,7 @@ class OllamaPlanner:
                         history.append({"role": "user", "content": _summarize_turn(turn, formatted_state, [result_text])})
                         continue
                     if not tool_trace and not model_text:
-                        return {"status": "no_action", "turns": turn + 1, "reason": "model_gave_empty_response_without_using_tools", **token_summary}
+                        return finish({"status": "no_action", "turns": turn + 1, "reason": "model_gave_empty_response_without_using_tools", **token_summary})
                     if had_failed_tool_result:
                         result = {
                             "status": "failed",
@@ -544,7 +553,7 @@ class OllamaPlanner:
                         }
                         if tool_trace:
                             result["tool_trace"] = tool_trace
-                        return result
+                        return finish(result)
                     write_verification = _verify_pending_writes(
                         semantic_map,
                         pending_write_verifications,
@@ -563,14 +572,14 @@ class OllamaPlanner:
                         }
                         if tool_trace:
                             result["tool_trace"] = tool_trace
-                        return result
+                        return finish(result)
                     result = {"status": "complete", "turns": turn + 1, **token_summary}
                     if model_text:
                         result["message"] = model_text
                     if tool_trace:
                         result["tool_trace"] = tool_trace
                     _print_run_summary(result)
-                    return result
+                    return finish(result)
 
                 tool_results = []
                 for tool_call in choice.message.tool_calls or []:
@@ -594,7 +603,7 @@ class OllamaPlanner:
                             "result": result_text,
                         }
                     )
-                    _emit_action_event(on_action, turn + 1, action, result)
+                    action_trace.append(_emit_action_event(on_action, turn + 1, action, result))
                     action_key = (action.type, action.target_id)
                     recent_action_keys.append(action_key)
                     if action_key == last_action_key:
@@ -628,7 +637,7 @@ class OllamaPlanner:
                                             ),
                                         })
                                 else:
-                                    return {
+                                    return finish({
                                         "status": "stalled",
                                         "turns": turn + 1,
                                         "reason": "oscillating_actions",
@@ -643,9 +652,9 @@ class OllamaPlanner:
                                             "invoke any visible element to place focus first."
                                         ),
                                         "tool_trace": tool_trace,
-                                    }
+                                    })
                     if repeated_action_count >= 4:
-                        return {
+                        return finish({
                             "status": "stalled",
                             "turns": turn + 1,
                             "reason": "repeated_action_without_progress",
@@ -658,7 +667,7 @@ class OllamaPlanner:
                                 "without progress."
                             ),
                             "tool_trace": tool_trace,
-                        }
+                        })
                     if repeated_action_count >= 3:
                         history.append({
                             "role": "user",
@@ -685,7 +694,7 @@ class OllamaPlanner:
             if tool_trace:
                 result["tool_trace"] = tool_trace
             _print_run_summary(result)
-            return result
+            return finish(result)
         finally:
             if self._owns_executor:
                 self.executor.shutdown(wait=False, cancel_futures=True)
@@ -888,9 +897,7 @@ def _emit_action_event(
     turn: int,
     action: Action,
     result: Any,
-) -> None:
-    if on_action is None:
-        return
+) -> dict[str, Any]:
     event = {
         "turn": turn,
         "action": action.type,
@@ -898,7 +905,9 @@ def _emit_action_event(
     }
     if isinstance(result, dict) and "ok" in result:
         event["ok"] = result["ok"]
-    on_action(event)
+    if on_action is not None:
+        on_action(event)
+    return event
 
 
 def _is_write_action(action: Action) -> bool:
