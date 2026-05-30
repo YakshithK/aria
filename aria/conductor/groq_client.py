@@ -20,4 +20,5 @@ class GroqClient:
 
     def create_completion(self, **kwargs: Any) -> Any:
         kwargs.setdefault("model", self.model)
+        kwargs.pop("extra_body", None)
         return self._client.chat.completions.create(**kwargs)
