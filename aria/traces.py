@@ -6,6 +6,39 @@ from pathlib import Path
 from typing import Any
 
 
+def write_orchestration_trace(
+    task: str,
+    subtasks: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+    result: dict[str, Any],
+) -> None:
+    """Write one master orchestration trace per task covering decomposition + FSM decisions."""
+    try:
+        timestamp = _utc_now()
+        trace_dir = Path.home() / ".aria" / "traces"
+        trace_dir.mkdir(parents=True, exist_ok=True)
+        filename = timestamp.replace("-", "").replace(":", "").removesuffix("Z").replace("T", "-")
+        path = trace_dir / f"{filename}_plan.jsonl"
+        record = {
+            "type": "orchestration",
+            "task": task,
+            "status": result.get("status"),
+            "steps": result.get("steps"),
+            "turns": result.get("turns"),
+            "retries": result.get("retries"),
+            "tokens": int(result.get("total_prompt_tokens") or 0)
+            + int(result.get("total_completion_tokens") or 0),
+            "subtasks": subtasks,
+            "events": events,
+            "summaries": result.get("summaries", []),
+            "timestamp": timestamp,
+        }
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=True) + "\n")
+    except Exception:
+        pass
+
+
 def write_trace(result: dict[str, Any], task: str, tool_trace: list[Any]) -> None:
     """Append a completed task trace to ~/.aria/traces/. Silently swallows errors."""
     try:

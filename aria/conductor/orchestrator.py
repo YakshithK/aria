@@ -8,23 +8,22 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from aria.planner import OLLAMA_MODEL, OllamaChatClient, OllamaPlanner
+from aria.traces import write_orchestration_trace
 
 
-DECOMPOSE_PROMPT = """You are a task planner for a Windows desktop automation agent.
+DECOMPOSE_SYSTEM = (
+    "You are a task planner for a Windows desktop automation agent. "
+    "You MUST respond by calling the plan tool — never with plain text."
+)
 
-Break the following task into sequential subtasks. Each subtask must:
+DECOMPOSE_PROMPT = """Break the following task into sequential subtasks. Each subtask must:
 - Be completable in one app session (navigation + one action)
 - Have an unambiguous success condition that can be verified from UI state
 - Be in the order they must be executed
 
-Return JSON only:
-[
-  {{"step": 1, "task": "...", "success_condition": "..."}},
-  ...
-]
+Call the plan tool now.
 
-Task: {task}
-"""
+Task: {task}"""
 
 
 SUMMARY_PROMPT = """Summarize what was accomplished in one sentence for a follow-up agent.
@@ -41,6 +40,35 @@ class Subtask:
     step: int
     task: str
     success_condition: str
+
+
+PLAN_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "plan",
+        "description": "Decompose a task into sequential subtasks before execution.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "subtasks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "step": {"type": "integer"},
+                            "task": {"type": "string"},
+                            "success_condition": {"type": "string"},
+                        },
+                        "required": ["step", "task", "success_condition"],
+                    },
+                    "minItems": 1,
+                    "maxItems": 10,
+                }
+            },
+            "required": ["subtasks"],
+        },
+    },
+}
 
 
 class CompletionClient(Protocol):
@@ -60,54 +88,27 @@ def _decompose_task(
     model: str = OLLAMA_MODEL,
 ) -> list[Subtask]:
     client = client or OllamaChatClient(model=model)
-    try:
-        response = client.create_completion(
-            model=model,
-            messages=[{"role": "user", "content": DECOMPOSE_PROMPT.format(task=task)}],
-            timeout=60,
-            extra_body={"think": False},
-        )
-        content = str(response.choices[0].message.content or "")
-        return _subtasks_from_json(content, fallback_task=task)
-    except Exception:
-        return [_fallback_subtask(task)]
-
-
-def _subtasks_from_json(content: str, *, fallback_task: str) -> list[Subtask]:
-    data = _load_first_json_array(content)
-    if not isinstance(data, list) or not 1 <= len(data) <= 10:
-        return [_fallback_subtask(fallback_task)]
-    subtasks: list[Subtask] = []
-    for index, item in enumerate(data, start=1):
-        if not isinstance(item, dict):
-            return [_fallback_subtask(fallback_task)]
-        raw_task = item.get("task")
-        raw_success = item.get("success_condition")
-        if not isinstance(raw_task, str) or not isinstance(raw_success, str):
-            return [_fallback_subtask(fallback_task)]
-        subtasks.append(
-            Subtask(
-                step=int(item.get("step") or index),
-                task=raw_task,
-                success_condition=raw_success,
-            )
-        )
+    response = client.create_completion(
+        model=model,
+        messages=[
+            {"role": "system", "content": DECOMPOSE_SYSTEM},
+            {"role": "user", "content": DECOMPOSE_PROMPT.format(task=task)},
+        ],
+        tools=[PLAN_TOOL],
+        timeout=120,
+        extra_body={"think": False},
+    )
+    tool_calls = response.choices[0].message.tool_calls or []
+    if not tool_calls:
+        raise RuntimeError("Planning model did not call the plan tool.")
+    call = tool_calls[0]
+    if call.function.name != "plan":
+        raise RuntimeError(f"Planning model called unexpected tool: {call.function.name}")
+    data = json.loads(call.function.arguments)
+    subtasks = [Subtask(**item) for item in data["subtasks"]]
+    if not 1 <= len(subtasks) <= 10:
+        raise ValueError("plan tool returned an invalid number of subtasks")
     return subtasks
-
-
-def _load_first_json_array(content: str) -> Any:
-    start = content.find("[")
-    if start < 0:
-        return None
-    try:
-        data, _end = json.JSONDecoder().raw_decode(content[start:])
-    except json.JSONDecodeError:
-        return None
-    return data
-
-
-def _fallback_subtask(task: str) -> Subtask:
-    return Subtask(step=1, task=task, success_condition="task is complete")
 
 
 class Orchestrator:
@@ -136,6 +137,7 @@ class Orchestrator:
         prior_context = "This is the first step."
         results: list[dict[str, Any]] = []
         summaries: list[str] = []
+        events: list[dict[str, Any]] = []
         total_turns = 0
         total_prompt_tokens = 0
         total_completion_tokens = 0
@@ -153,18 +155,45 @@ class Orchestrator:
                 total_completion_tokens += int(last_result.get("total_completion_tokens") or 0)
 
                 if _is_done(last_result):
-                    results.append(last_result)
                     summary = self._summarize_subtask(subtask, last_result)
                     summaries.append(summary)
+                    events.append({
+                        "step": index,
+                        "subtask": subtask.task,
+                        "attempt": retry_count + 1,
+                        "planner_status": last_result.get("status"),
+                        "turns": last_result.get("turns"),
+                        "fsm": "advance",
+                        "summary": summary,
+                    })
+                    results.append(last_result)
                     prior_context = summary
                     break
 
                 if retry_count < self.max_retries:
                     retry_count += 1
                     total_retries += 1
+                    events.append({
+                        "step": index,
+                        "subtask": subtask.task,
+                        "attempt": retry_count,
+                        "planner_status": last_result.get("status"),
+                        "turns": last_result.get("turns"),
+                        "fsm": "retry",
+                        "summary": None,
+                    })
                     continue
 
-                return _failure_result(
+                events.append({
+                    "step": index,
+                    "subtask": subtask.task,
+                    "attempt": retry_count + 1,
+                    "planner_status": last_result.get("status"),
+                    "turns": last_result.get("turns"),
+                    "fsm": "failed",
+                    "summary": None,
+                })
+                result = _failure_result(
                     subtask=subtask,
                     step_index=index,
                     total_steps=len(subtasks),
@@ -172,8 +201,15 @@ class Orchestrator:
                     last_result=last_result,
                     prior_context=prior_context,
                 )
+                write_orchestration_trace(
+                    task,
+                    [{"step": s.step, "task": s.task, "success_condition": s.success_condition} for s in subtasks],
+                    events,
+                    result,
+                )
+                return result
 
-        return {
+        result = {
             "status": "done",
             "steps": len(subtasks),
             "turns": total_turns,
@@ -183,6 +219,13 @@ class Orchestrator:
             "results": results,
             "summaries": summaries,
         }
+        write_orchestration_trace(
+            task,
+            [{"step": s.step, "task": s.task, "success_condition": s.success_condition} for s in subtasks],
+            events,
+            result,
+        )
+        return result
 
     def _summarize_subtask(self, subtask: Subtask, result: dict[str, Any]) -> str:
         try:

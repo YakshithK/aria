@@ -1,11 +1,26 @@
 from dataclasses import dataclass
+import json
 
-from aria.conductor.orchestrator import Orchestrator, Subtask, _decompose_task
+import pytest
+
+from aria.conductor.orchestrator import Orchestrator, PLAN_TOOL, Subtask, _decompose_task
 
 
 @dataclass
 class FakeMessage:
-    content: str
+    content: str | None = None
+    tool_calls: list | None = None
+
+
+@dataclass
+class FakeFunction:
+    name: str
+    arguments: str
+
+
+@dataclass
+class FakeToolCall:
+    function: FakeFunction
 
 
 @dataclass
@@ -19,13 +34,30 @@ class FakeResponse:
 
 
 class FakeClient:
-    def __init__(self, *contents: str):
-        self.contents = list(contents)
+    def __init__(self, *messages: FakeMessage):
+        self.messages = list(messages)
         self.calls = []
 
     def create_completion(self, **kwargs):
         self.calls.append(kwargs)
-        return FakeResponse([FakeChoice(FakeMessage(self.contents.pop(0)))])
+        return FakeResponse([FakeChoice(self.messages.pop(0))])
+
+
+def plan_message(subtasks):
+    return FakeMessage(
+        tool_calls=[
+            FakeToolCall(
+                FakeFunction(
+                    "plan",
+                    json.dumps({"subtasks": subtasks}),
+                )
+            )
+        ]
+    )
+
+
+def text_message(content: str):
+    return FakeMessage(content=content)
 
 
 class FakePlanner:
@@ -40,12 +72,12 @@ class FakePlanner:
 
 def test_decompose_happy_path():
     client = FakeClient(
-        """
-        [
-          {"step": 1, "task": "Open Discord #general", "success_condition": "#general is visible"},
-          {"step": 2, "task": "Read the latest message", "success_condition": "latest message is known"}
-        ]
-        """
+        plan_message(
+            [
+                {"step": 1, "task": "Open Discord #general", "success_condition": "#general is visible"},
+                {"step": 2, "task": "Read the latest message", "success_condition": "latest message is known"},
+            ]
+        )
     )
 
     subtasks = _decompose_task("read Discord", client=client)
@@ -54,27 +86,58 @@ def test_decompose_happy_path():
         Subtask(1, "Open Discord #general", "#general is visible"),
         Subtask(2, "Read the latest message", "latest message is known"),
     ]
-    assert "Break the following task into sequential subtasks" in client.calls[0]["messages"][0]["content"]
+    assert "Break the following task into sequential subtasks" in client.calls[0]["messages"][1]["content"]
+    assert client.calls[0]["tools"] == [PLAN_TOOL]
+    assert "tool_choice" not in client.calls[0]
 
 
-def test_decompose_malformed_json_falls_back_to_single_subtask():
-    client = FakeClient("not json")
+def test_decompose_uses_tool_call_arguments_not_message_content():
+    client = FakeClient(
+        FakeMessage(
+            content="ignore this prose",
+            tool_calls=[
+                FakeToolCall(
+                    FakeFunction(
+                        "plan",
+                        json.dumps(
+                            {
+                                "subtasks": [
+                                    {
+                                        "step": 1,
+                                        "task": "Use the structured args",
+                                        "success_condition": "structured args were used",
+                                    }
+                                ]
+                            }
+                        ),
+                    )
+                )
+            ],
+        )
+    )
 
     subtasks = _decompose_task("do the thing", client=client)
 
-    assert subtasks == [Subtask(1, "do the thing", "task is complete")]
+    assert subtasks == [Subtask(1, "Use the structured args", "structured args were used")]
+
+
+def test_decompose_raises_clear_error_when_model_does_not_call_plan_tool():
+    client = FakeClient(FakeMessage(content="I will just write prose.", tool_calls=None))
+
+    with pytest.raises(RuntimeError, match="did not call the plan tool"):
+        _decompose_task("do the thing", client=client)
 
 
 def test_fsm_advances_on_done():
     client = FakeClient(
-        """
-        [
-          {"step": 1, "task": "Read Discord", "success_condition": "message read"},
-          {"step": 2, "task": "Write Notion", "success_condition": "summary written"}
-        ]
-        """,
-        "Discord message was read.",
-        "Notion summary was written.",
+        plan_message(
+            [
+                {"step": 1, "task": "Read Discord", "success_condition": "message read"},
+                {"step": 2, "task": "Write Notion", "success_condition": "summary written"},
+            ]
+        ),
+        text_message("Discord message was read."),
+        text_message("Notion summary was written."),
     )
     planner = FakePlanner([{"status": "done", "turns": 1}, {"status": "done", "turns": 2}])
     orchestrator = Orchestrator(
@@ -93,8 +156,8 @@ def test_fsm_advances_on_done():
 
 def test_fsm_retries_on_stall():
     client = FakeClient(
-        '[{"step": 1, "task": "Navigate Discord", "success_condition": "channel visible"}]',
-        "Discord navigation completed.",
+        plan_message([{"step": 1, "task": "Navigate Discord", "success_condition": "channel visible"}]),
+        text_message("Discord navigation completed."),
     )
     planner = FakePlanner(
         [
@@ -118,7 +181,7 @@ def test_fsm_retries_on_stall():
 
 def test_fsm_fails_after_max_retries():
     client = FakeClient(
-        '[{"step": 1, "task": "Navigate Discord", "success_condition": "channel visible"}]'
+        plan_message([{"step": 1, "task": "Navigate Discord", "success_condition": "channel visible"}])
     )
     planner = FakePlanner(
         [
@@ -149,14 +212,14 @@ def test_fsm_fails_after_max_retries():
 
 def test_context_injection_passes_step_success_condition_and_prior_summary():
     client = FakeClient(
-        """
-        [
-          {"step": 1, "task": "Read Discord", "success_condition": "message read"},
-          {"step": 2, "task": "Write Notion", "success_condition": "summary written"}
-        ]
-        """,
-        "The Discord message says hello.",
-        "The Notion summary was written.",
+        plan_message(
+            [
+                {"step": 1, "task": "Read Discord", "success_condition": "message read"},
+                {"step": 2, "task": "Write Notion", "success_condition": "summary written"},
+            ]
+        ),
+        text_message("The Discord message says hello."),
+        text_message("The Notion summary was written."),
     )
     planner = FakePlanner([{"status": "done", "turns": 1}, {"status": "done", "turns": 1}])
     orchestrator = Orchestrator(
