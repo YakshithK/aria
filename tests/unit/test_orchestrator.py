@@ -84,7 +84,7 @@ def test_decompose_happy_path():
         Subtask(1, "Open Discord #general", "#general is visible"),
         Subtask(2, "Read the latest message", "latest message is known"),
     ]
-    assert "Break the following task into sequential subtasks" in client.calls[0]["messages"][1]["content"]
+    assert "Call the plan tool now" in client.calls[0]["messages"][1]["content"]
     assert client.calls[0]["tools"] == [PLAN_TOOL]
     assert client.calls[0]["tool_choice"] == {"type": "function", "function": {"name": "plan"}}
 

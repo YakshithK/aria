@@ -17,10 +17,33 @@ DECOMPOSE_SYSTEM = (
     "You MUST respond by calling the plan tool — never with plain text."
 )
 
-DECOMPOSE_PROMPT = """Break the following task into sequential subtasks. Each subtask must:
-- Be completable in one app session (navigation + one action)
-- Have an unambiguous success condition that can be verified from UI state
-- Be in the order they must be executed
+DECOMPOSE_PROMPT = """Break the following task into fine-grained sequential subtasks.
+
+The agent can only do one atomic action per subtask:
+- invoke a button (e.g. click nav button to open search modal)
+- type into a focused input (e.g. type "Canopy" into the search box)
+- click/invoke a result or link (e.g. click the Canopy server result)
+- read visible text content from the UI
+- write text into a text block (e.g. write summary into a Notion page)
+- focus an app window
+
+Rules:
+- All apps are already running — never include "open" or "launch"
+- Never use clipboard, copy, or paste — read content directly from UI
+- Each subtask is ONE atomic action, not a sequence
+- Success conditions must describe what is visible on screen after the action
+- Use up to 10 subtasks — fine-grained is better than coarse
+
+Example for "read last message in Discord #general and paste into Notion":
+1. Focus the Discord window — Discord is in the foreground
+2. Invoke the navigation search button — search modal is open
+3. Type "Canopy" into the search input — Canopy server result is visible
+4. Click the Canopy server result — Canopy server channels are visible
+5. Click the #general channel — #general message history is visible
+6. Read the most recent message text — message content is known
+7. Focus the Notion window — Notion is in the foreground
+8. Navigate to or create the "Discord Log" page — Discord Log page is open
+9. Write the message summary into the page — summary text is visible in the page
 
 Call the plan tool now.
 
@@ -63,7 +86,7 @@ PLAN_TOOL = {
                         "required": ["step", "task", "success_condition"],
                     },
                     "minItems": 1,
-                    "maxItems": 10,
+                    "maxItems": 15,
                 }
             },
             "required": ["subtasks"],
