@@ -20,7 +20,7 @@ Latest measured Aria run:
 
 | Status | Turns | Time | Tokens | Notes |
 |---|---:|---:|---:|---|
-| complete | 3 | 89.6s | 31,353 | Used semantic state, compact IDs, and `write_to` |
+| complete | 3 | 49.9s | 32,061 | Semantic state, compact IDs, `write_to`, correct tab selection |
 
 This is still a staged demo. Discord must already show the source channel, Notion must
 already show a writable page, and both apps must be launched with CDP debug ports.
