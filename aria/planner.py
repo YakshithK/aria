@@ -385,6 +385,7 @@ class OllamaPlanner:
         self,
         task: str,
         *,
+        on_action: Callable[[dict[str, Any]], None] | None = None,
         max_turns: int = 50,
         timeout: float = 300.0,
     ) -> dict[str, Any]:
@@ -515,6 +516,7 @@ class OllamaPlanner:
                                 "source": "text_tool_call",
                             }
                         )
+                        _emit_action_event(on_action, turn + 1, action, result)
                         history.append(
                             {
                                 "role": "assistant",
@@ -592,6 +594,7 @@ class OllamaPlanner:
                             "result": result_text,
                         }
                     )
+                    _emit_action_event(on_action, turn + 1, action, result)
                     action_key = (action.type, action.target_id)
                     recent_action_keys.append(action_key)
                     if action_key == last_action_key:
@@ -878,6 +881,24 @@ def _guard_wrong_app_navigation(task: str, action: Action) -> dict[str, Any] | N
 
 def _has_failed_tool_result(result: Any) -> bool:
     return isinstance(result, dict) and result.get("ok") is False
+
+
+def _emit_action_event(
+    on_action: Callable[[dict[str, Any]], None] | None,
+    turn: int,
+    action: Action,
+    result: Any,
+) -> None:
+    if on_action is None:
+        return
+    event = {
+        "turn": turn,
+        "action": action.type,
+        "target_id": action.target_id,
+    }
+    if isinstance(result, dict) and "ok" in result:
+        event["ok"] = result["ok"]
+    on_action(event)
 
 
 def _is_write_action(action: Action) -> bool:

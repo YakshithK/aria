@@ -277,6 +277,37 @@ def test_tool_call_executes_action_and_appends_ollama_tool_history():
     }
 
 
+def test_run_task_calls_on_action_after_each_completed_tool_action():
+    tool = tool_call(
+        "set_value",
+        {"type": "set_value", "target_id": "cdp:page:nodeId_2", "payload": {"text": "hi"}},
+    )
+    client = FakeOllamaClient(
+        [
+            FakeResponse([FakeChoice("tool_calls", FakeMessage(tool_calls=[tool]))]),
+            FakeResponse([FakeChoice("stop", FakeMessage(content="Done"))]),
+        ]
+    )
+    events = []
+    planner = OllamaPlanner(
+        client=client,
+        conductor=FakeConductor(),
+        executor=InlineExecutor(),
+    )
+
+    result = asyncio.run(planner.run_task("type hi", on_action=events.append))
+
+    assert result["status"] == "complete"
+    assert events == [
+        {
+            "turn": 1,
+            "action": "set_value",
+            "target_id": "cdp:page:nodeId_2",
+            "ok": True,
+        }
+    ]
+
+
 def test_planner_executes_textual_tool_call_returned_as_stop_content():
     client = FakeOllamaClient(
         [

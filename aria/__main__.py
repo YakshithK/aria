@@ -3,24 +3,27 @@ import json
 
 from rich.console import Console
 from rich.table import Table
+import httpx
 import typer
+import uvicorn
 
+from aria.app_discovery import (
+    APP_NAMES,
+    CDP_PORTS,
+    AppDiscoveryError,
+    discover_cdp_backends,
+)
 from aria.backends.cdp import CDPBackend
 from aria.conductor.local import LocalConductor
 from aria.conductor.registry import WindowRegistry
 from aria.launcher import (
-    LAUNCH_SPECS,
-    app_process_running,
-    cdp_port_ready,
     launch_app,
-    wait_for_cdp_port,
 )
 from aria.planner import OllamaPlanner
 
 app = typer.Typer(help="CUA Windows semantic computer-use agent.")
 console = Console()
-CDP_PORTS = {"chrome": 9222, **{name: spec.port for name, spec in LAUNCH_SPECS.items()}}
-APP_NAMES = {"chrome": "Chrome", **{name: spec.app for name, spec in LAUNCH_SPECS.items()}}
+DAEMON_URL = "http://127.0.0.1:7823"
 
 
 @app.callback()
@@ -87,49 +90,6 @@ def launch(app_name: str, restart: bool = typer.Option(False, "--restart")) -> N
     _print_json(result)
 
 
-def _discover_backends(requested: list[str]) -> list[CDPBackend]:
-    """Return CDPBackend instances for the requested apps, or auto-discover all live ports."""
-    if requested:
-        backends = []
-        for name in requested:
-            normalized = name.lower()
-            port = CDP_PORTS.get(normalized)
-            if port is None:
-                console.print(f"[red]Unsupported app:[/red] {name}")
-                raise typer.Exit(1)
-            if not cdp_port_ready(port):
-                if normalized in LAUNCH_SPECS and app_process_running(normalized):
-                    console.print(
-                        f"[red]Error:[/red] {APP_NAMES[normalized]} is already running without CDP. "
-                        f"Restart it with `aria launch {normalized} --restart`.",
-                        soft_wrap=True,
-                    )
-                    raise typer.Exit(1)
-                if normalized in LAUNCH_SPECS:
-                    console.print(f"[dim]Launching {APP_NAMES[normalized]} with CDP port {port}[/dim]")
-                    launch_app(normalized)
-                    if not wait_for_cdp_port(port, timeout_s=10.0):
-                        console.print(
-                            f"[red]Error:[/red] {APP_NAMES[normalized]} did not expose CDP "
-                            f"on port {port} within 10s."
-                        )
-                        raise typer.Exit(1)
-            else:
-                console.print(f"[dim]Using existing {APP_NAMES[normalized]} CDP port {port}[/dim]")
-            backends.append(CDPBackend(port=port, app=APP_NAMES[normalized]))
-        return backends
-
-    # Auto-discover: include every port that responds to /json/list
-    backends = []
-    for name, port in CDP_PORTS.items():
-        if cdp_port_ready(port):
-            backends.append(CDPBackend(port=port, app=APP_NAMES[name]))
-    if not backends:
-        console.print("[red]Error:[/red] No running CDP apps found. Launch apps first with `aria launch <app>`.")
-        raise typer.Exit(1)
-    return backends
-
-
 @app.command()
 def run(
     task: str,
@@ -137,16 +97,65 @@ def run(
 ) -> None:
     """Run a task through the Ollama planner."""
     try:
-        backends = _discover_backends(apps)
+        if daemon_is_running():
+            result = stream_task_from_daemon(task, apps)
+            _print_json(result)
+            return
+        backends = discover_cdp_backends(
+            apps,
+            on_status=lambda message: console.print(f"[dim]{message}[/dim]"),
+        )
         app_names = ", ".join(b.app for b in backends)
         console.print(f"[dim]Connecting to: {app_names}[/dim]")
         result = asyncio.run(OllamaPlanner(conductor=LocalConductor(cdp_backends=backends)).run_task(task))
     except typer.Exit:
         raise
+    except AppDiscoveryError as exc:
+        console.print(f"[red]Error:[/red] {exc}", soft_wrap=True)
+        raise typer.Exit(1) from exc
     except Exception as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from exc
     _print_json(result)
+
+
+@app.command()
+def daemon(action: str = typer.Argument("start")) -> None:
+    """Start the background daemon on 127.0.0.1:7823."""
+    if action != "start":
+        console.print(f"[red]Unsupported daemon action:[/red] {action}")
+        raise typer.Exit(1)
+    uvicorn.run("aria.daemon:app", host="127.0.0.1", port=7823, log_level="info")
+
+
+def daemon_is_running() -> bool:
+    try:
+        response = httpx.get(f"{DAEMON_URL}/health", timeout=0.5)
+    except Exception:
+        return False
+    return response.status_code == 200
+
+
+def stream_task_from_daemon(task: str, apps: list[str]) -> dict[str, object]:
+    final_result: dict[str, object] | None = None
+    with httpx.stream(
+        "POST",
+        f"{DAEMON_URL}/task",
+        json={"task": task, "apps": apps or None},
+        timeout=None,
+    ) as response:
+        response.raise_for_status()
+        for line in response.iter_lines():
+            if not line.startswith("data: "):
+                continue
+            event = json.loads(line.removeprefix("data: "))
+            if event.get("type") == "progress":
+                action = event.get("action", "action")
+                turn = event.get("turn", "?")
+                console.print(f"[dim]turn {turn}: {action}[/dim]")
+            elif event.get("type") == "result":
+                final_result = event
+    return final_result or {"status": "failed", "message": "Daemon stream ended without result."}
 
 
 def _print_json(data: object) -> None:
