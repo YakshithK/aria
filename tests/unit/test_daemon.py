@@ -154,3 +154,22 @@ def test_daemon_returns_400_for_unsupported_app(monkeypatch):
     response = asyncio.run(run())
     assert response.status_code == 400
     assert response.json()["detail"] == "Unsupported app: nope"
+
+
+def test_daemon_falls_back_to_starlette_when_fastapi_router_versions_mismatch(monkeypatch):
+    class BrokenFastAPI:
+        def __init__(self):
+            raise TypeError("Router.__init__() got an unexpected keyword argument 'on_startup'")
+
+    monkeypatch.setattr("aria.daemon.FastAPI", BrokenFastAPI)
+
+    async def run():
+        app = create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.get("/health")
+
+    response = asyncio.run(run())
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}

@@ -8,7 +8,10 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from starlette.responses import StreamingResponse
+from starlette.requests import Request
+from starlette.responses import JSONResponse, StreamingResponse
+from starlette.routing import Route
+from starlette.applications import Starlette
 
 from aria.app_discovery import AppDiscoveryError, UnsupportedAppNameError, discover_cdp_backends
 from aria.conductor.local import LocalConductor
@@ -28,6 +31,15 @@ class DaemonState:
 
 
 def create_app() -> FastAPI:
+    try:
+        return _create_fastapi_app()
+    except TypeError as exc:
+        if "on_startup" not in str(exc):
+            raise
+        return _create_starlette_app()
+
+
+def _create_fastapi_app() -> FastAPI:
     app = FastAPI()
     state = DaemonState()
 
@@ -65,6 +77,54 @@ def create_app() -> FastAPI:
         )
 
     return app
+
+
+def _create_starlette_app() -> Starlette:
+    state = DaemonState()
+
+    async def health(request: Request) -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    async def status(request: Request) -> JSONResponse:
+        return JSONResponse(
+            {
+                "running": state.lock.locked(),
+                "current_task": state.current_task,
+                "turn": state.turn,
+            }
+        )
+
+    async def task(request: Request) -> StreamingResponse | JSONResponse:
+        try:
+            task_request = TaskRequest(**await request.json())
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        if state.lock.locked():
+            return JSONResponse({"detail": "A task is already running."}, status_code=409)
+        await state.lock.acquire()
+        state.current_task = task_request.task
+        state.turn = None
+        try:
+            backends = discover_cdp_backends(task_request.apps or [])
+        except UnsupportedAppNameError as exc:
+            _clear_task_slot(state)
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except AppDiscoveryError as exc:
+            _clear_task_slot(state)
+            return JSONResponse({"detail": str(exc)}, status_code=500)
+
+        return StreamingResponse(
+            _task_events(task_request.task, backends, state),
+            media_type="text/event-stream",
+        )
+
+    return Starlette(
+        routes=[
+            Route("/health", health, methods=["GET"]),
+            Route("/status", status, methods=["GET"]),
+            Route("/task", task, methods=["POST"]),
+        ]
+    )
 
 
 async def _task_events(
