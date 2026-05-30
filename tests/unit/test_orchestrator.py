@@ -1,8 +1,6 @@
 from dataclasses import dataclass
 import json
 
-import pytest
-
 from aria.conductor.orchestrator import Orchestrator, PLAN_TOOL, Subtask, _decompose_task
 
 
@@ -88,7 +86,7 @@ def test_decompose_happy_path():
     ]
     assert "Break the following task into sequential subtasks" in client.calls[0]["messages"][1]["content"]
     assert client.calls[0]["tools"] == [PLAN_TOOL]
-    assert "tool_choice" not in client.calls[0]
+    assert client.calls[0]["tool_choice"] == {"type": "function", "function": {"name": "plan"}}
 
 
 def test_decompose_uses_tool_call_arguments_not_message_content():
@@ -121,11 +119,35 @@ def test_decompose_uses_tool_call_arguments_not_message_content():
     assert subtasks == [Subtask(1, "Use the structured args", "structured args were used")]
 
 
-def test_decompose_raises_clear_error_when_model_does_not_call_plan_tool():
+def test_decompose_falls_back_to_message_json_when_tool_call_missing():
+    client = FakeClient(
+        FakeMessage(
+            content=json.dumps(
+                {
+                    "subtasks": [
+                        {
+                            "step": 1,
+                            "task": "Use fallback JSON",
+                            "success_condition": "fallback JSON was parsed",
+                        }
+                    ]
+                }
+            ),
+            tool_calls=None,
+        )
+    )
+
+    subtasks = _decompose_task("do the thing", client=client)
+
+    assert subtasks == [Subtask(1, "Use fallback JSON", "fallback JSON was parsed")]
+
+
+def test_decompose_malformed_text_falls_back_to_single_subtask():
     client = FakeClient(FakeMessage(content="I will just write prose.", tool_calls=None))
 
-    with pytest.raises(RuntimeError, match="did not call the plan tool"):
-        _decompose_task("do the thing", client=client)
+    subtasks = _decompose_task("do the thing", client=client)
+
+    assert subtasks == [Subtask(1, "do the thing", "task is complete")]
 
 
 def test_fsm_advances_on_done():
@@ -238,3 +260,33 @@ def test_context_injection_passes_step_success_condition_and_prior_summary():
     assert "[Step 2 of 2] Write Notion" in second_task
     assert "Success condition: summary written" in second_task
     assert "Prior context: The Discord message says hello." in second_task
+
+
+def test_orchestrator_uses_groq_client_by_default(monkeypatch):
+    class FakeGroqClient:
+        model = "groq-model"
+
+    monkeypatch.setattr("aria.conductor.orchestrator.GroqClient", FakeGroqClient)
+
+    orchestrator = Orchestrator(conductor=object())
+
+    assert isinstance(orchestrator.client, FakeGroqClient)
+    assert orchestrator.model == "groq-model"
+
+
+def test_orchestrator_falls_back_to_ollama_without_groq_key(monkeypatch):
+    class FakeGroqClient:
+        def __init__(self):
+            raise KeyError("GROQ_API_KEY")
+
+    class FakeOllamaClient:
+        def __init__(self, model):
+            self.model = model
+
+    monkeypatch.setattr("aria.conductor.orchestrator.GroqClient", FakeGroqClient)
+    monkeypatch.setattr("aria.conductor.orchestrator.OllamaChatClient", FakeOllamaClient)
+
+    orchestrator = Orchestrator(conductor=object(), model="fallback-model")
+
+    assert isinstance(orchestrator.client, FakeOllamaClient)
+    assert orchestrator.client.model == "fallback-model"

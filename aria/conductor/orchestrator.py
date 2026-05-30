@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from aria.conductor.groq_client import GroqClient
 from aria.planner import OLLAMA_MODEL, OllamaChatClient, OllamaPlanner
 from aria.traces import write_orchestration_trace
 
@@ -95,20 +96,76 @@ def _decompose_task(
             {"role": "user", "content": DECOMPOSE_PROMPT.format(task=task)},
         ],
         tools=[PLAN_TOOL],
+        tool_choice={"type": "function", "function": {"name": "plan"}},
         timeout=120,
         extra_body={"think": False},
     )
-    tool_calls = response.choices[0].message.tool_calls or []
-    if not tool_calls:
-        raise RuntimeError("Planning model did not call the plan tool.")
-    call = tool_calls[0]
-    if call.function.name != "plan":
-        raise RuntimeError(f"Planning model called unexpected tool: {call.function.name}")
-    data = json.loads(call.function.arguments)
-    subtasks = [Subtask(**item) for item in data["subtasks"]]
-    if not 1 <= len(subtasks) <= 10:
-        raise ValueError("plan tool returned an invalid number of subtasks")
+    message = response.choices[0].message
+    tool_calls = message.tool_calls or []
+    if tool_calls and tool_calls[0].function.name == "plan":
+        try:
+            return _subtasks_from_plan_data(json.loads(tool_calls[0].function.arguments), fallback_task=task)
+        except Exception:
+            return [_fallback_subtask(task)]
+    return _subtasks_from_text(str(message.content or ""), fallback_task=task)
+
+
+def _subtasks_from_text(content: str, *, fallback_task: str) -> list[Subtask]:
+    data = _load_json_value(content)
+    if data is None:
+        return [_fallback_subtask(fallback_task)]
+    return _subtasks_from_plan_data(data, fallback_task=fallback_task)
+
+
+def _subtasks_from_plan_data(data: Any, *, fallback_task: str) -> list[Subtask]:
+    raw_subtasks = data.get("subtasks") if isinstance(data, dict) else data
+    if not isinstance(raw_subtasks, list) or not 1 <= len(raw_subtasks) <= 10:
+        return [_fallback_subtask(fallback_task)]
+
+    subtasks: list[Subtask] = []
+    for index, item in enumerate(raw_subtasks, start=1):
+        if not isinstance(item, dict):
+            return [_fallback_subtask(fallback_task)]
+        item = {str(key).strip(): value for key, value in item.items()}
+        raw_task = item.get("task")
+        raw_success = item.get("success_condition")
+        if not isinstance(raw_task, str) or not isinstance(raw_success, str):
+            return [_fallback_subtask(fallback_task)]
+        task_text = raw_task.strip()
+        success_text = raw_success.strip()
+        if not task_text or not success_text:
+            return [_fallback_subtask(fallback_task)]
+        subtasks.append(
+            Subtask(
+                step=int(item.get("step") or index),
+                task=task_text,
+                success_condition=success_text,
+            )
+        )
     return subtasks
+
+
+def _load_json_value(content: str) -> Any:
+    stripped = content.strip()
+    if not stripped:
+        return None
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        pass
+
+    starts = [position for position in (stripped.find("{"), stripped.find("[")) if position >= 0]
+    if not starts:
+        return None
+    try:
+        value, _end = json.JSONDecoder().raw_decode(stripped[min(starts):])
+    except json.JSONDecodeError:
+        return None
+    return value
+
+
+def _fallback_subtask(task: str) -> Subtask:
+    return Subtask(step=1, task=task, success_condition="task is complete")
 
 
 class Orchestrator:
@@ -122,9 +179,15 @@ class Orchestrator:
         max_retries: int = 2,
     ) -> None:
         self.conductor = conductor
-        self.client = client or OllamaChatClient(model=model)
+        if client is not None:
+            self.client = client
+        else:
+            try:
+                self.client = GroqClient()
+            except KeyError:
+                self.client = OllamaChatClient(model=model)
         self.planner_factory = planner_factory or (lambda conductor: OllamaPlanner(conductor=conductor))
-        self.model = model
+        self.model = getattr(self.client, "model", model)
         self.max_retries = max_retries
 
     def run_task(
