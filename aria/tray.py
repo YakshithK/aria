@@ -70,10 +70,12 @@ class TrayApp:
         self.icon: Any = None
 
     def run(self) -> None:
+        import signal
         import keyboard
         import pystray
         import tkinter as tk
 
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
         self.root = tk.Tk()
         self.root.withdraw()
         keyboard.add_hotkey("win+shift+a", lambda: self.root.after(0, self._open_task_dialog))
