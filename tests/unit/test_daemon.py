@@ -36,11 +36,11 @@ def test_daemon_health_and_idle_status():
 def test_daemon_task_streams_progress_and_result(monkeypatch):
     app = create_app()
 
-    class FakePlanner:
+    class FakeOrchestrator:
         def __init__(self, conductor):
             self.conductor = conductor
 
-        async def run_task(self, task, *, on_action=None):
+        def run_task(self, task, *, on_action=None):
             assert task == "do it"
             if on_action:
                 on_action({"turn": 1, "action": "set_value", "target_id": "cdp:x", "ok": True})
@@ -54,7 +54,7 @@ def test_daemon_task_streams_progress_and_result(monkeypatch):
 
     monkeypatch.setattr("aria.daemon.discover_cdp_backends", lambda apps: ["backend"])
     monkeypatch.setattr("aria.daemon.LocalConductor", lambda cdp_backends: {"backends": cdp_backends})
-    monkeypatch.setattr("aria.daemon.OllamaPlanner", FakePlanner)
+    monkeypatch.setattr("aria.daemon.Orchestrator", FakeOrchestrator)
 
     async def run():
         transport = httpx.ASGITransport(app=app)
@@ -75,7 +75,7 @@ def test_daemon_rejects_concurrent_task_but_status_still_responds(monkeypatch):
     release = threading.Event()
     started = threading.Event()
 
-    class FakePlanner:
+    class FakeOrchestrator:
         def __init__(self, conductor):
             self.conductor = conductor
 
@@ -86,7 +86,7 @@ def test_daemon_rejects_concurrent_task_but_status_still_responds(monkeypatch):
 
     monkeypatch.setattr("aria.daemon.discover_cdp_backends", lambda apps: ["backend"])
     monkeypatch.setattr("aria.daemon.LocalConductor", lambda cdp_backends: {"backends": cdp_backends})
-    monkeypatch.setattr("aria.daemon.OllamaPlanner", FakePlanner)
+    monkeypatch.setattr("aria.daemon.Orchestrator", FakeOrchestrator)
 
     async def run():
         app = create_app()
@@ -110,7 +110,7 @@ def test_daemon_rejects_concurrent_task_but_status_still_responds(monkeypatch):
 
 
 def test_daemon_runs_blocking_planner_in_executor_so_status_does_not_block(monkeypatch):
-    class FakePlanner:
+    class FakeOrchestrator:
         def __init__(self, conductor):
             self.conductor = conductor
 
@@ -120,7 +120,7 @@ def test_daemon_runs_blocking_planner_in_executor_so_status_does_not_block(monke
 
     monkeypatch.setattr("aria.daemon.discover_cdp_backends", lambda apps: ["backend"])
     monkeypatch.setattr("aria.daemon.LocalConductor", lambda cdp_backends: {"backends": cdp_backends})
-    monkeypatch.setattr("aria.daemon.OllamaPlanner", FakePlanner)
+    monkeypatch.setattr("aria.daemon.Orchestrator", FakeOrchestrator)
 
     async def run():
         app = create_app()

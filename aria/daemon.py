@@ -15,6 +15,7 @@ from starlette.applications import Starlette
 
 from aria.app_discovery import AppDiscoveryError, UnsupportedAppNameError, discover_cdp_backends
 from aria.conductor.local import LocalConductor
+from aria.conductor.orchestrator import Orchestrator
 from aria.planner import OllamaPlanner
 
 
@@ -140,8 +141,14 @@ async def _task_events(
         loop.call_soon_threadsafe(queue.put_nowait, {"type": "progress", **event})
 
     async def run_planner() -> dict[str, Any]:
-        planner = OllamaPlanner(conductor=LocalConductor(cdp_backends=backends))
-        return await loop.run_in_executor(None, _run_task_blocking, planner, task, on_action)
+        orchestrator = Orchestrator(conductor=LocalConductor(cdp_backends=backends))
+        return await loop.run_in_executor(
+            None,
+            _run_task_blocking_orchestrated,
+            orchestrator,
+            task,
+            on_action,
+        )
 
     async def produce_result() -> None:
         try:
@@ -179,6 +186,17 @@ def _run_task_blocking(
     on_action: Any,
 ) -> dict[str, Any]:
     result = planner.run_task(task, on_action=on_action)
+    if inspect.isawaitable(result):
+        return asyncio.run(result)
+    return result
+
+
+def _run_task_blocking_orchestrated(
+    orchestrator: Orchestrator,
+    task: str,
+    on_action: Any,
+) -> dict[str, Any]:
+    result = orchestrator.run_task(task, on_action=on_action)
     if inspect.isawaitable(result):
         return asyncio.run(result)
     return result
