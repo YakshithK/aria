@@ -1,5 +1,8 @@
 import asyncio
 import json
+import subprocess
+import sys
+import time
 
 from rich.console import Console
 from rich.table import Table
@@ -20,6 +23,7 @@ from aria.launcher import (
     launch_app,
 )
 from aria.planner import OllamaPlanner
+from aria.tray import TrayApp
 
 app = typer.Typer(help="CUA Windows semantic computer-use agent.")
 console = Console()
@@ -128,12 +132,44 @@ def daemon(action: str = typer.Argument("start")) -> None:
     uvicorn.run("aria.daemon:app", host="127.0.0.1", port=7823, log_level="info")
 
 
+@app.command()
+def tray() -> None:
+    """Start the system tray UI."""
+    if not daemon_is_running():
+        start_daemon_subprocess()
+        if not wait_for_daemon(timeout_s=5.0):
+            console.print("[red]Error:[/red] Daemon did not start within 5s.")
+            raise typer.Exit(1)
+    TrayApp().run()
+
+
 def daemon_is_running() -> bool:
     try:
         response = httpx.get(f"{DAEMON_URL}/health", timeout=0.5)
     except Exception:
         return False
     return response.status_code == 200
+
+
+def start_daemon_subprocess() -> subprocess.Popen:
+    creationflags = 0
+    if sys.platform == "win32":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return subprocess.Popen(
+        [sys.executable, "-m", "aria", "daemon", "start"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creationflags,
+    )
+
+
+def wait_for_daemon(timeout_s: float = 5.0, interval_s: float = 0.25) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if daemon_is_running():
+            return True
+        time.sleep(interval_s)
+    return daemon_is_running()
 
 
 def stream_task_from_daemon(task: str, apps: list[str]) -> dict[str, object]:

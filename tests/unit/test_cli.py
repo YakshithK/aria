@@ -348,3 +348,53 @@ def test_run_command_falls_back_to_local_path_when_daemon_is_unavailable(monkeyp
 
     assert result.exit_code == 0
     assert '"status": "local"' in result.stdout
+
+
+def test_tray_command_starts_daemon_when_missing_then_runs_tray(monkeypatch):
+    calls = []
+    health_checks = iter([False, False, True])
+
+    class FakeTrayApp:
+        def run(self):
+            calls.append(("tray",))
+
+    monkeypatch.setattr("aria.__main__.daemon_is_running", lambda: next(health_checks))
+    monkeypatch.setattr(
+        "aria.__main__.start_daemon_subprocess",
+        lambda: calls.append(("daemon",)) or object(),
+    )
+    monkeypatch.setattr("aria.__main__.TrayApp", FakeTrayApp)
+    monkeypatch.setattr("aria.__main__.time.sleep", lambda seconds: None)
+
+    result = CliRunner().invoke(app, ["tray"])
+
+    assert result.exit_code == 0
+    assert calls == [("daemon",), ("tray",)]
+
+
+def test_tray_command_does_not_start_daemon_when_already_running(monkeypatch):
+    calls = []
+
+    class FakeTrayApp:
+        def run(self):
+            calls.append(("tray",))
+
+    monkeypatch.setattr("aria.__main__.daemon_is_running", lambda: True)
+    monkeypatch.setattr("aria.__main__.start_daemon_subprocess", lambda: calls.append(("daemon",)))
+    monkeypatch.setattr("aria.__main__.TrayApp", FakeTrayApp)
+
+    result = CliRunner().invoke(app, ["tray"])
+
+    assert result.exit_code == 0
+    assert calls == [("tray",)]
+
+
+def test_tray_command_reports_daemon_start_timeout(monkeypatch):
+    monkeypatch.setattr("aria.__main__.daemon_is_running", lambda: False)
+    monkeypatch.setattr("aria.__main__.start_daemon_subprocess", lambda: object())
+    monkeypatch.setattr("aria.__main__.wait_for_daemon", lambda timeout_s=5.0: False)
+
+    result = CliRunner().invoke(app, ["tray"])
+
+    assert result.exit_code == 1
+    assert "Daemon did not start within 5s" in result.stdout
