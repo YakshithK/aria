@@ -4,7 +4,10 @@ import subprocess
 import sys
 import time
 
+from dotenv import load_dotenv
 from rich.console import Console
+
+load_dotenv()
 from rich.table import Table
 import httpx
 import typer
