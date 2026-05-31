@@ -57,9 +57,11 @@ Navigation recovery:
 - If you have switched focus more than once without taking a read or write action, stop switching. Emit done=false with a structured failure describing what you were looking for and what the state showed instead.
 
 Completion check:
-- Before calling done=true on any task that required writing, verify your tool history contains a successful write_to or type action. If no write occurred, you are not done — emit done=false with a description of what was missing.
+- When the success condition is fully met, call the `done` tool immediately with a brief message. Do NOT take any further actions after the success condition is met.
+- Before calling done on any task that required writing, verify your tool history contains a successful write_to or type action. If no write occurred, you are not done.
+- CRITICAL: Stay focused on the current step only. Do not jump ahead to future steps or interact with apps not needed for this step.
 
-Stop and return done when the task is fully complete."""
+Stop and call done when the step's success condition is met."""
 
 
 OLLAMA_TOOLS: list[dict[str, Any]] = [
@@ -243,6 +245,26 @@ OLLAMA_TOOLS: list[dict[str, Any]] = [
                     },
                 },
                 "required": ["type", "target_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "done",
+            "description": (
+                "Signal that this step is complete and the success condition is verified. "
+                "Call this immediately when done — do NOT take any further actions after calling done."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "Brief description of what was accomplished.",
+                    }
+                },
+                "required": ["message"],
             },
         },
     },
@@ -582,6 +604,16 @@ class OllamaPlanner:
                         if tool_trace:
                             result["tool_trace"] = tool_trace
                         return finish(result)
+                    if not tool_trace:
+                        result = {
+                            "status": "failed",
+                            "turns": turn + 1,
+                            "reason": "no_tools_used",
+                            "message": model_text or "Planner declared the task complete without performing any tool actions.",
+                            **token_summary,
+                        }
+                        _print_run_summary(result)
+                        return finish(result)
                     result = {"status": "complete", "turns": turn + 1, **token_summary}
                     if model_text:
                         result["message"] = model_text
@@ -592,6 +624,43 @@ class OllamaPlanner:
 
                 tool_results = []
                 for tool_call in choice.message.tool_calls or []:
+                    if tool_call.function.name == "done":
+                        if not tool_trace:
+                            # Model called done without taking any action — reject and
+                            # give it another turn. We cannot break here (would crash
+                            # append_tool_history with mismatched tool_results length),
+                            # so we handle this as a pseudo-tool: add the rejection to
+                            # history as a user message and a fake tool result, then
+                            # continue to the next turn.
+                            rejection = (
+                                "done rejected: you must perform at least one tool action "
+                                "to verify the success condition before calling done. "
+                                "Look at the current UI state and take the required action now."
+                            )
+                            tool_results.append(rejection)
+                            tool_trace.append({
+                                "name": "done",
+                                "action": {"type": "done"},
+                                "result": rejection,
+                            })
+                            # Don't return — let the loop append history and continue.
+                            continue
+                        done_args = json.loads(tool_call.function.arguments or "{}")
+                        done_message = done_args.get("message", "")
+                        elapsed_total = self.monotonic() - start
+                        result = {
+                            "status": "complete",
+                            "turns": turn + 1,
+                            "elapsed_seconds": round(elapsed_total, 2),
+                            "total_prompt_tokens": total_prompt_tokens,
+                            "total_completion_tokens": total_completion_tokens,
+                        }
+                        if done_message:
+                            result["message"] = done_message
+                        if tool_trace:
+                            result["tool_trace"] = tool_trace
+                        _print_run_summary(result)
+                        return finish(result)
                     action = action_from_tool_call(tool_call)
                     action = _resolve_action_target_alias(action, known_target_aliases)
                     result = _guard_action_against_task(task, semantic_map, action)

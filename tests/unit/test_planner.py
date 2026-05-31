@@ -165,6 +165,7 @@ def test_tool_schema_valid():
         "scroll",
         "key_combo",
         "wait_for",
+        "done",
     }
     for schema in OLLAMA_TOOLS:
         assert schema["type"] == "function"
@@ -191,7 +192,9 @@ def test_history_assistant_and_tool_result_format():
     }
 
 
-def test_end_turn_exits_complete():
+def test_end_turn_without_tools_exits_failed():
+    # Model that says "Done" without calling any tools must not be marked complete —
+    # the planner cannot verify the success condition was actually met.
     client = FakeOllamaClient(
         [FakeResponse([FakeChoice("stop", FakeMessage(content="Done"))])]
     )
@@ -203,7 +206,8 @@ def test_end_turn_exits_complete():
 
     result = asyncio.run(planner.run_task("do it"))
 
-    assert result["status"] == "complete"
+    assert result["status"] == "failed"
+    assert result["reason"] == "no_tools_used"
     assert result["turns"] == 1
     assert result["message"] == "Done"
     assert "elapsed_seconds" in result
@@ -332,7 +336,8 @@ def test_run_task_writes_trace_on_terminal_result(monkeypatch):
 
     result = asyncio.run(planner.run_task("do it"))
 
-    assert result["status"] == "complete"
+    # No tools used → failed, but trace is still written
+    assert result["status"] == "failed"
     assert writes == [(result, "do it", [])]
 
 
