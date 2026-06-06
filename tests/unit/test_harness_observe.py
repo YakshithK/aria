@@ -103,6 +103,8 @@ def test_wsl_windows_screenshot_capture_reads_windows_png(tmp_path):
 
     assert calls
     assert "CopyFromScreen" in calls[0][-1]
+    assert "SetProcessDPIAware" in calls[0][-1]
+    assert calls[0][-1].index("SetProcessDPIAware") < calls[0][-1].index("PrimaryScreen.Bounds")
     assert "Screen]::PrimaryScreen.Bounds" in calls[0][-1]
     assert "VirtualScreen" not in calls[0][-1]
     assert screenshot.path == screenshot_path
