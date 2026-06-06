@@ -440,7 +440,84 @@ def test_harness_once_dry_run_prints_observation_payload(monkeypatch):
     assert '"will_execute": false' in result.stdout
 
 
-def test_harness_once_requires_dry_run_until_execution_is_wired():
+def test_harness_once_preview_prints_proposal_and_validation(monkeypatch):
+    monkeypatch.setattr(
+        "aria.__main__._build_harness_preview_payload",
+        lambda goal, subtask, success_condition, apps, config_path: {
+            "status": "preview",
+            "goal": goal,
+            "subtask": subtask,
+            "success_condition": success_condition,
+            "apps": apps,
+            "config_path": str(config_path),
+            "screenshot_path": "/tmp/screen.png",
+            "screen_size": [800, 600],
+            "candidate_count": 0,
+            "actor_model": "gpt-4.1-mini",
+            "proposal": {
+                "type": "wait",
+                "seconds": 1,
+                "confidence": 0.8,
+                "evidence": "visible",
+            },
+            "validation": {
+                "ok": True,
+                "reason": "wait accepted",
+                "execution_route": "wait",
+                "candidate": None,
+            },
+            "will_execute": False,
+        },
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "harness-once",
+            "--goal",
+            "open search",
+            "--subtask",
+            "find input",
+            "--success",
+            "input visible",
+            "--preview",
+            "--config",
+            ".aria/config.json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert '"status": "preview"' in result.stdout
+    assert '"proposal": {' in result.stdout
+    assert '"validation": {' in result.stdout
+    assert '"will_execute": false' in result.stdout
+
+
+def test_harness_once_preview_reports_missing_config(monkeypatch):
+    def fail_preview(goal, subtask, success_condition, apps, config_path):
+        raise FileNotFoundError("config not found: .aria/config.json. Run `aria setup` or pass --config.")
+
+    monkeypatch.setattr("aria.__main__._build_harness_preview_payload", fail_preview)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "harness-once",
+            "--goal",
+            "open search",
+            "--subtask",
+            "find input",
+            "--success",
+            "input visible",
+            "--preview",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Run `aria setup` or pass --config" in result.stdout
+
+
+def test_harness_once_requires_one_mode():
     result = CliRunner().invoke(
         app,
         [
@@ -455,4 +532,24 @@ def test_harness_once_requires_dry_run_until_execution_is_wired():
     )
 
     assert result.exit_code == 1
-    assert "Only --dry-run is wired" in result.stdout
+    assert "Choose --dry-run or --preview" in result.stdout
+
+
+def test_harness_once_rejects_multiple_modes():
+    result = CliRunner().invoke(
+        app,
+        [
+            "harness-once",
+            "--goal",
+            "send a note",
+            "--subtask",
+            "find the input",
+            "--success",
+            "input is visible",
+            "--dry-run",
+            "--preview",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Choose only one" in result.stdout

@@ -3,6 +3,7 @@ import json
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from dotenv import load_dotenv
 from rich.console import Console
@@ -22,7 +23,12 @@ from aria.app_discovery import (
 from aria.backends.cdp import CDPBackend
 from aria.conductor.local import LocalConductor
 from aria.conductor.registry import WindowRegistry
+from aria.harness.config import DEFAULT_CONFIG_PATH, load_harness_config
 from aria.harness.observe import PillowScreenshotCapture, build_observation_bundle
+from aria.harness.provider import build_completion_client
+from aria.harness.runner import preview_turn
+from aria.harness.semantic import SemanticHarnessObserver, SemanticObserverAdapter
+from aria.harness.vlm import build_json_vlm_actor
 from aria.launcher import (
     launch_app,
 )
@@ -134,14 +140,28 @@ def harness_once(
     success_condition: str = typer.Option(..., "--success", help="Observable success condition."),
     apps: list[str] = typer.Option([], "--app", help="Optional app hints for future semantic adapters."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Capture observation only; do not call models or execute actions."),
+    preview: bool = typer.Option(False, "--preview", help="Call the actor VLM and validate one action; do not execute."),
+    config_path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", help="Harness config path."),
 ) -> None:
     """Capture one harness observation for a subtask."""
-    if not dry_run:
-        console.print("[red]Error:[/red] Only --dry-run is wired for harness-once in this milestone.")
+    if dry_run and preview:
+        console.print("[red]Error:[/red] Choose only one of --dry-run or --preview.")
+        raise typer.Exit(1)
+    if not dry_run and not preview:
+        console.print("[red]Error:[/red] Choose --dry-run or --preview.")
         raise typer.Exit(1)
 
     try:
-        result = _build_harness_dry_run_payload(goal, subtask, success_condition, apps)
+        if dry_run:
+            result = _build_harness_dry_run_payload(goal, subtask, success_condition, apps)
+        else:
+            result = _build_harness_preview_payload(
+                goal,
+                subtask,
+                success_condition,
+                apps,
+                config_path,
+            )
     except Exception as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from exc
@@ -244,6 +264,75 @@ def _build_harness_dry_run_payload(
         "image_bytes": len(screenshot.image_bytes),
         "will_execute": False,
     }
+
+
+def _build_harness_preview_payload(
+    goal: str,
+    subtask: str,
+    success_condition: str,
+    apps: list[str],
+    config_path: Path,
+) -> dict[str, object]:
+    if not config_path.exists():
+        raise FileNotFoundError(f"config not found: {config_path}. Run `aria setup` or pass --config.")
+    config = load_harness_config(config_path)
+    client = build_completion_client(config.actor)
+    actor = build_json_vlm_actor(client=client, config=config.actor)
+    observer = _build_preview_observer(apps)
+    preview = preview_turn(
+        goal=goal,
+        subtask=subtask,
+        success_condition=success_condition,
+        observer=observer,
+        actor=actor,
+    )
+    observation = preview.observation
+    return {
+        "status": "preview",
+        "goal": goal,
+        "subtask": subtask,
+        "success_condition": success_condition,
+        "apps": apps,
+        "config_path": str(config_path),
+        "actor_provider": config.actor.provider,
+        "actor_model": config.actor.model,
+        "screenshot_path": observation.screenshot_path,
+        "screen_size": list(observation.screen_size),
+        "candidate_count": len(observation.candidates),
+        "proposal": preview.proposal.model_dump(exclude_none=True),
+        "validation": preview.validation.model_dump(),
+        "will_execute": False,
+    }
+
+
+def _build_preview_observer(apps: list[str]):
+    capture = PillowScreenshotCapture()
+    if not apps:
+        return _ScreenshotOnlyObserver(capture)
+    backends = discover_cdp_backends(
+        apps,
+        on_status=lambda message: console.print(f"[dim]{message}[/dim]"),
+    )
+    conductor = LocalConductor(cdp_backends=backends)
+    return SemanticHarnessObserver(
+        semantic_observer=SemanticObserverAdapter(conductor),
+        capture=capture,
+    )
+
+
+class _ScreenshotOnlyObserver:
+    def __init__(self, capture: PillowScreenshotCapture) -> None:
+        self.capture = capture
+
+    def observe(self, *, goal, subtask, success_condition, recent_actions):
+        bundle, _ = build_observation_bundle(
+            goal=goal,
+            subtask=subtask,
+            success_condition=success_condition,
+            capture=self.capture,
+            recent_actions=recent_actions,
+        )
+        return bundle
 
 
 def _print_json(data: object) -> None:
