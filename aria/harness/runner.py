@@ -8,6 +8,7 @@ from aria.harness.models import (
     ActionRecord,
     HarnessResult,
     ObservationBundle,
+    TurnPreview,
     VerificationResult,
 )
 from aria.harness.validate import validate_action
@@ -53,6 +54,29 @@ class Executor(Protocol):
 
 
 TraceWriter = Callable[[dict[str, Any]], None]
+
+
+def preview_turn(
+    *,
+    goal: str,
+    subtask: str,
+    success_condition: str,
+    observer: Observer,
+    actor: Actor,
+) -> TurnPreview:
+    observation = observer.observe(
+        goal=goal,
+        subtask=subtask,
+        success_condition=success_condition,
+        recent_actions=[],
+    )
+    proposal = actor.propose(observation)
+    validation = validate_action(proposal, observation)
+    return TurnPreview(
+        observation=observation,
+        proposal=proposal,
+        validation=validation,
+    )
 
 
 def run_subtask(

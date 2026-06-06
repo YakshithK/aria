@@ -95,6 +95,12 @@ class ValidationResult(BaseModel):
     candidate: Candidate | None = None
 
 
+class TurnPreview(BaseModel):
+    observation: ObservationBundle
+    proposal: ActionProposal
+    validation: ValidationResult
+
+
 class VerificationResult(BaseModel):
     status: VerificationStatus
     confidence: float

@@ -1,5 +1,5 @@
 from aria.harness.models import ActionProposal, Candidate, ObservationBundle, VerificationResult
-from aria.harness.runner import run_subtask
+from aria.harness.runner import preview_turn, run_subtask
 
 
 def make_bundle(turn: int = 1) -> ObservationBundle:
@@ -73,6 +73,48 @@ class FakeExecutor:
         return {"ok": self.ok, "route": validation.execution_route, "raw_result": {"ok": self.ok}}
 
 
+class PreviewObserver:
+    def __init__(self, observation):
+        self.observation = observation
+        self.calls = []
+
+    def observe(self, *, goal, subtask, success_condition, recent_actions):
+        self.calls.append(
+            {
+                "goal": goal,
+                "subtask": subtask,
+                "success_condition": success_condition,
+                "recent_actions": recent_actions,
+            }
+        )
+        return self.observation
+
+
+class PreviewActor:
+    def __init__(self, proposal):
+        self.proposal = proposal
+        self.calls = []
+
+    def propose(self, observation):
+        self.calls.append(observation)
+        return self.proposal
+
+
+def preview_observation():
+    return ObservationBundle(
+        goal="Search",
+        subtask="Find input",
+        success_condition="input visible",
+        screenshot_path="/tmp/screen.png",
+        screen_size=(800, 600),
+        focused_window=None,
+        windows=[],
+        candidates=[],
+        recent_actions=[],
+        turn=1,
+    )
+
+
 def click_search(confidence: float = 0.8) -> ActionProposal:
     return ActionProposal(
         type="click_element",
@@ -84,6 +126,66 @@ def click_search(confidence: float = 0.8) -> ActionProposal:
 
 def verification(status: str) -> VerificationResult:
     return VerificationResult(status=status, confidence=0.8, evidence=f"{status} evidence")
+
+
+def test_preview_turn_observes_proposes_and_validates_without_execution():
+    observation = preview_observation()
+    observer = PreviewObserver(observation)
+    actor = PreviewActor(
+        ActionProposal(
+            type="wait",
+            seconds=1,
+            reason="loading",
+            confidence=0.8,
+            evidence="screen is visible",
+        )
+    )
+
+    result = preview_turn(
+        goal="Search",
+        subtask="Find input",
+        success_condition="input visible",
+        observer=observer,
+        actor=actor,
+    )
+
+    assert result.observation == observation
+    assert result.proposal.type == "wait"
+    assert result.validation.ok is True
+    assert observer.calls == [
+        {
+            "goal": "Search",
+            "subtask": "Find input",
+            "success_condition": "input visible",
+            "recent_actions": [],
+        }
+    ]
+    assert actor.calls == [observation]
+
+
+def test_preview_turn_returns_validation_failure_for_bad_action():
+    observation = preview_observation()
+    observer = PreviewObserver(observation)
+    actor = PreviewActor(
+        ActionProposal(
+            type="click",
+            x=9999,
+            y=9999,
+            confidence=0.8,
+            evidence="outside",
+        )
+    )
+
+    result = preview_turn(
+        goal="Search",
+        subtask="Find input",
+        success_condition="input visible",
+        observer=observer,
+        actor=actor,
+    )
+
+    assert result.validation.ok is False
+    assert "outside screen bounds" in result.validation.reason
 
 
 def test_runner_completes_when_verifier_returns_complete():
