@@ -45,6 +45,20 @@ def test_add_click_marker_draws_marker_at_coordinate():
         path.unlink()
 
 
+def test_click_marker_keeps_label_above_point_when_space_allows():
+    output = add_click_marker(png_bytes(200, 120), x=80, y=50, label="click: 80,50")
+
+    path = Path("/tmp/aria-test-marker-label.png")
+    path.write_bytes(output)
+    image = Image.open(path)
+    try:
+        assert image.getpixel((80, 50))[:3] == (220, 0, 0)
+        assert image.getpixel((92, 58))[:3] == (255, 255, 255)
+        assert image.getpixel((92, 34))[:3] != (255, 255, 255)
+    finally:
+        path.unlink()
+
+
 def test_visual_debugger_saves_grid_and_marker(tmp_path):
     debugger = VisualDebugger(output_dir=tmp_path)
 

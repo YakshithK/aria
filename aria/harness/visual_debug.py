@@ -68,8 +68,11 @@ def add_click_marker(image_bytes: bytes, *, x: int, y: int, label: str) -> bytes
     draw.line([(x - 20, y), (x + 20, y)], fill=(220, 0, 0, 230), width=3)
     draw.line([(x, y - 20), (x, y + 20)], fill=(220, 0, 0, 230), width=3)
     draw.ellipse((x - radius, y - radius, x + radius, y + radius), outline=(220, 0, 0, 230), width=3)
-    draw.rectangle((x + 8, y + 8, x + 120, y + 24), fill=(255, 255, 255, 210))
-    draw.text((x + 12, y + 10), label, fill=(180, 0, 0, 255), font=font)
+    draw.ellipse((x - 3, y - 3, x + 3, y + 3), fill=(220, 0, 0, 255))
+    label_x = x + 8
+    label_y = y - 24 if y >= 32 else y + 8
+    draw.rectangle((label_x, label_y, label_x + 120, label_y + 16), fill=(255, 255, 255, 210))
+    draw.text((label_x + 4, label_y + 2), label, fill=(180, 0, 0, 255), font=font)
     return _save_png(image)
 
 
