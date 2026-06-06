@@ -7,7 +7,7 @@ from typing import Any
 from aria.harness.models import ObservationBundle
 
 
-ACTOR_SYSTEM_PROMPT = """You control a desktop one action at a time.
+ACTOR_BASE_PROMPT = """You control a desktop one action at a time.
 
 Return exactly one JSON object. Do not return prose.
 Prefer click_element when a provided candidate clearly matches the intended target.
@@ -24,7 +24,10 @@ Do not complete multiple steps in one response.
 If the target is not visible, choose scroll, wait, or fail.
 Include visual evidence and confidence.
 Avoid destructive, financial, security, and credential actions unless the subtask explicitly asks for them.
+"""
 
+
+ACTOR_CANDIDATE_ACTIONS = """
 Allowed JSON action types:
 - {"type":"click_element","candidate_id":"candidate_1","confidence":0.8,"evidence":"..."}
 - {"type":"type_into_element","candidate_id":"candidate_1","text":"hello","confidence":0.8,"evidence":"..."}
@@ -35,6 +38,21 @@ Allowed JSON action types:
 - {"type":"wait","seconds":1,"reason":"loading","confidence":0.8,"evidence":"..."}
 - {"type":"done","summary":"...","confidence":0.8,"evidence":"..."}
 - {"type":"fail","reason":"...","confidence":0.8,"evidence":"..."}
+"""
+
+
+ACTOR_SCREENSHOT_ONLY_ACTIONS = """
+Allowed JSON action types when candidates is empty:
+- {"type":"click","x":100,"y":200,"confidence":0.8,"evidence":"..."}
+- {"type":"type","text":"hello","confidence":0.8,"evidence":"..."}
+- {"type":"key_combo","keys":["CTRL","L"],"confidence":0.8,"evidence":"..."}
+- {"type":"scroll","x":500,"y":500,"direction":"down","amount":2,"confidence":0.8,"evidence":"..."}
+- {"type":"wait","seconds":1,"reason":"loading","confidence":0.8,"evidence":"..."}
+- {"type":"done","summary":"...","confidence":0.8,"evidence":"..."}
+- {"type":"fail","reason":"...","confidence":0.8,"evidence":"..."}
+
+Do not return click_element or type_into_element in screenshot-only mode.
+Do not return candidate_id in screenshot-only mode.
 """
 
 
@@ -66,7 +84,7 @@ def build_actor_messages(
     else:
         content = user_content
     return [
-        {"role": "system", "content": ACTOR_SYSTEM_PROMPT},
+        {"role": "system", "content": _actor_system_prompt(bundle)},
         {"role": "user", "content": content},
     ]
 
@@ -129,6 +147,11 @@ def _bundle_json(bundle: ObservationBundle) -> str:
         },
         ensure_ascii=True,
     )
+
+
+def _actor_system_prompt(bundle: ObservationBundle) -> str:
+    actions = ACTOR_CANDIDATE_ACTIONS if bundle.candidates else ACTOR_SCREENSHOT_ONLY_ACTIONS
+    return ACTOR_BASE_PROMPT + actions
 
 
 def _image_part(image_bytes: bytes, mime_type: str) -> dict[str, Any]:

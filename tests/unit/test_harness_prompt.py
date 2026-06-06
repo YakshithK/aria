@@ -54,6 +54,8 @@ def test_actor_prompt_forbids_element_actions_when_candidates_are_empty():
     assert '"candidate_ids": []' in text
     assert "If candidates is empty" in text
     assert "click_element and type_into_element are forbidden" in text
+    assert '{"type":"click_element","candidate_id":"candidate_1"' not in text
+    assert '{"type":"type_into_element","candidate_id":"candidate_1"' not in text
 
 
 def test_actor_prompt_mentions_coordinate_grid():
