@@ -31,6 +31,24 @@ def make_bundle(label: str = "Search", *, bounds_space: str = "screen") -> Obser
     )
 
 
+def make_editable_bundle(*, backend_id: str | None = "cdp:notion:abc:nodeId_13") -> ObservationBundle:
+    bundle = make_bundle()
+    bundle.candidates[0] = Candidate(
+        id="candidate_1",
+        backend_id=backend_id,
+        source="cdp_ax",
+        role="textbox",
+        label="Search input",
+        bounds=(20, 48, 120, 32),
+        bounds_space="screen",
+        actions=["type_into_element"],
+        confidence=0.9,
+        visible=True,
+        window_id=None,
+    )
+    return bundle
+
+
 def test_valid_click_element_is_accepted():
     result = validate_action(
         ActionProposal(
@@ -197,6 +215,54 @@ def test_type_accepts_recent_editable_focus_result():
     )
 
     assert result.ok is True
+
+
+def test_type_into_element_accepts_editable_candidate_with_text():
+    result = validate_action(
+        ActionProposal(
+            type="type_into_element",
+            candidate_id="candidate_1",
+            text="hello",
+            confidence=0.8,
+            evidence="input visible",
+        ),
+        make_editable_bundle(),
+    )
+
+    assert result.ok is True
+    assert result.execution_route == "semantic"
+
+
+def test_type_into_element_rejects_candidate_without_editable_action():
+    result = validate_action(
+        ActionProposal(
+            type="type_into_element",
+            candidate_id="candidate_1",
+            text="hello",
+            confidence=0.8,
+            evidence="input visible",
+        ),
+        make_bundle(),
+    )
+
+    assert result.ok is False
+    assert "type_into_element" in result.reason
+
+
+def test_type_into_element_without_backend_can_use_screen_bounds_fallback():
+    result = validate_action(
+        ActionProposal(
+            type="type_into_element",
+            candidate_id="candidate_1",
+            text="hello",
+            confidence=0.8,
+            evidence="input visible",
+        ),
+        make_editable_bundle(backend_id=None),
+    )
+
+    assert result.ok is True
+    assert result.execution_route == "candidate_center"
 
 
 def test_scroll_requires_direction_and_amount():

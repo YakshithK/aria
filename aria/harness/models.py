@@ -11,6 +11,7 @@ CandidateSource = Literal["cdp_ax", "dom", "uia", "window"]
 BoundsSpace = Literal["screen", "window", "viewport"]
 ActionType = Literal[
     "click_element",
+    "type_into_element",
     "click",
     "type",
     "key_combo",

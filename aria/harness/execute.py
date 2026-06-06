@@ -45,6 +45,8 @@ class HarnessExecutor:
 
         if proposal.type == "click_element":
             return self._execute_click_element(proposal, validation)
+        if proposal.type == "type_into_element":
+            return self._execute_type_into_element(proposal, validation)
         if proposal.type == "click":
             pixel = self._pixel_or_error("pixel")
             if isinstance(pixel, dict):
@@ -135,6 +137,86 @@ class HarnessExecutor:
                 fallback_reason="semantic backend unavailable",
             )
         return {"ok": False, "route": None, "error": f"unsupported click_element route: {validation.execution_route}"}
+
+    def _execute_type_into_element(
+        self,
+        proposal: ActionProposal,
+        validation: ValidationResult,
+    ) -> dict[str, Any]:
+        candidate = validation.candidate
+        if candidate is None:
+            return {"ok": False, "route": None, "error": "validated candidate missing"}
+        if validation.execution_route == "semantic":
+            if self.semantic_executor is not None:
+                action = {
+                    "type": "set_value",
+                    "target_id": candidate.backend_id,
+                    "payload": {"text": proposal.text},
+                }
+                raw = self.semantic_executor.execute_semantic(action)
+                return _result(
+                    "semantic",
+                    proposal,
+                    raw,
+                    candidate_id=candidate.id,
+                    backend_id=candidate.backend_id,
+                )
+            if (
+                self.pixel_executor is not None
+                and candidate.bounds is not None
+                and candidate.bounds_space == "screen"
+            ):
+                return self._pixel_type_into_candidate(proposal, candidate, "semantic executor unavailable")
+            return {
+                "ok": False,
+                "route": "semantic",
+                "candidate_id": candidate.id,
+                "backend_id": candidate.backend_id,
+                "error": "semantic executor unavailable",
+            }
+        if validation.execution_route == "candidate_center":
+            return self._pixel_type_into_candidate(proposal, candidate, "semantic backend unavailable")
+        return {
+            "ok": False,
+            "route": None,
+            "error": f"unsupported type_into_element route: {validation.execution_route}",
+        }
+
+    def _pixel_type_into_candidate(
+        self,
+        proposal: ActionProposal,
+        candidate: Any,
+        fallback_reason: str,
+    ) -> dict[str, Any]:
+        if candidate.bounds is None:
+            return {"ok": False, "route": None, "error": "candidate bounds missing"}
+        pixel = self._pixel_or_error("candidate_center")
+        if isinstance(pixel, dict):
+            return pixel
+        x, y, width, height = candidate.bounds
+        click_result = pixel.click(x + width // 2, y + height // 2)
+        if click_result.get("ok") is False:
+            return _result(
+                "candidate_center",
+                proposal,
+                click_result,
+                candidate_id=candidate.id,
+                backend_id=candidate.backend_id,
+                fallback_reason=fallback_reason,
+            )
+        type_result = pixel.type_text(str(proposal.text or ""))
+        return _result(
+            "candidate_center",
+            proposal,
+            {
+                "ok": bool(type_result.get("ok", True)),
+                "click": click_result,
+                "type": type_result,
+            },
+            candidate_id=candidate.id,
+            backend_id=candidate.backend_id,
+            fallback_reason=fallback_reason,
+        )
 
     def _pixel_or_error(self, route: str) -> PixelExecutor | dict[str, Any]:
         if self.pixel_executor is None:

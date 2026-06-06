@@ -73,6 +73,19 @@ def test_action_proposal_accepts_click_element_and_requires_confidence_evidence(
     assert proposal.candidate_id == "candidate_1"
 
 
+def test_action_proposal_accepts_type_into_element():
+    proposal = ActionProposal(
+        type="type_into_element",
+        candidate_id="candidate_1",
+        text="hello",
+        confidence=0.84,
+        evidence="The input field is visible.",
+    )
+
+    assert proposal.type == "type_into_element"
+    assert proposal.text == "hello"
+
+
 def test_action_proposal_rejects_missing_confidence():
     with pytest.raises(ValidationError):
         ActionProposal(

@@ -62,6 +62,24 @@ def bundle(*, backend_id="cdp:notion:abc:nodeId_12") -> ObservationBundle:
     )
 
 
+def editable_bundle(*, backend_id="cdp:notion:abc:nodeId_13") -> ObservationBundle:
+    observation = bundle(backend_id=backend_id)
+    observation.candidates[0] = Candidate(
+        id="candidate_1",
+        backend_id=backend_id,
+        source="cdp_ax",
+        role="textbox",
+        label="Search input",
+        bounds=(20, 48, 120, 32),
+        bounds_space="screen",
+        actions=["type_into_element"],
+        confidence=0.9,
+        visible=True,
+        window_id=None,
+    )
+    return observation
+
+
 def test_executor_routes_click_element_with_backend_to_semantic_executor():
     observation = bundle()
     proposal = ActionProposal(
@@ -165,3 +183,43 @@ def test_executor_routes_type_to_pixel_text_input():
     assert result["ok"] is True
     assert result["route"] == "keyboard"
     assert pixel.calls == [("type_text", "hello")]
+
+
+def test_executor_routes_type_into_element_with_backend_to_semantic_set_value():
+    observation = editable_bundle()
+    proposal = ActionProposal(
+        type="type_into_element",
+        candidate_id="candidate_1",
+        text="hello",
+        confidence=0.8,
+        evidence="input visible",
+    )
+    validation = validate_action(proposal, observation)
+    semantic = FakeSemanticExecutor()
+
+    result = HarnessExecutor(semantic_executor=semantic).execute(proposal, validation, observation)
+
+    assert result["ok"] is True
+    assert result["route"] == "semantic"
+    assert semantic.actions == [
+        {"type": "set_value", "target_id": "cdp:notion:abc:nodeId_13", "payload": {"text": "hello"}}
+    ]
+
+
+def test_executor_falls_back_for_type_into_element_without_backend():
+    observation = editable_bundle(backend_id=None)
+    proposal = ActionProposal(
+        type="type_into_element",
+        candidate_id="candidate_1",
+        text="hello",
+        confidence=0.8,
+        evidence="input visible",
+    )
+    validation = validate_action(proposal, observation)
+    pixel = FakePixelExecutor()
+
+    result = HarnessExecutor(pixel_executor=pixel).execute(proposal, validation, observation)
+
+    assert result["ok"] is True
+    assert result["route"] == "candidate_center"
+    assert pixel.calls == [("click", 80, 64), ("type_text", "hello")]

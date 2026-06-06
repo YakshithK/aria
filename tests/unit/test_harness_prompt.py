@@ -37,6 +37,7 @@ def test_actor_prompt_contains_one_action_json_rules_and_candidates():
 
     assert "Return exactly one JSON object" in text
     assert "Prefer click_element" in text
+    assert "type_into_element" in text
     assert "candidate_1" in text
     assert "Search" in text
     assert "data:image/png" not in text

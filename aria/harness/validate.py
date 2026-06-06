@@ -39,6 +39,8 @@ def validate_action(
 
     if proposal.type == "click_element":
         return _validate_click_element(proposal, bundle)
+    if proposal.type == "type_into_element":
+        return _validate_type_into_element(proposal, bundle)
     if proposal.type == "click":
         return _validate_click(proposal, bundle)
     if proposal.type == "type":
@@ -100,6 +102,36 @@ def _validate_click_element(
     if not _inside_screen(center_x, center_y, bundle.screen_size):
         return _reject(f"candidate {candidate.id} center is outside screen bounds")
     return _accept("candidate center pixel fallback accepted", "candidate_center", candidate)
+
+
+def _validate_type_into_element(
+    proposal: ActionProposal,
+    bundle: ObservationBundle,
+) -> ValidationResult:
+    if not proposal.candidate_id:
+        return _reject("type_into_element requires candidate_id")
+    if not proposal.text:
+        return _reject("type_into_element requires text")
+    candidate = _candidate_by_id(bundle, proposal.candidate_id)
+    if candidate is None:
+        return _reject(f"unknown candidate_id: {proposal.candidate_id}")
+    if "type_into_element" not in candidate.actions:
+        return _reject(f"candidate {candidate.id} does not support type_into_element")
+    if candidate.backend_id:
+        return _accept("semantic editable candidate accepted", "semantic", candidate)
+    if candidate.bounds is None:
+        return _reject(f"candidate {candidate.id} has no bounds for pixel fallback")
+    if candidate.bounds_space != "screen":
+        return _reject(
+            f"candidate {candidate.id} has unsupported coordinate space for pixel fallback: "
+            f"{candidate.bounds_space}"
+        )
+    x, y, width, height = candidate.bounds
+    center_x = x + width // 2
+    center_y = y + height // 2
+    if not _inside_screen(center_x, center_y, bundle.screen_size):
+        return _reject(f"candidate {candidate.id} center is outside screen bounds")
+    return _accept("candidate center text fallback accepted", "candidate_center", candidate)
 
 
 def _validate_click(
