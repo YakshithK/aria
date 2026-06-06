@@ -1,6 +1,8 @@
 # gstack operational files (local only)
 .claude/*
 .firecrawl/
+docs/superpowers/plans/*.md
+docs/superpowers/specs/*.md
 
 # Environment secrets
 .env

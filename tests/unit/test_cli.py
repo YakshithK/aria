@@ -398,3 +398,61 @@ def test_tray_command_reports_daemon_start_timeout(monkeypatch):
 
     assert result.exit_code == 1
     assert "Daemon did not start within 5s" in result.stdout
+
+
+def test_harness_once_dry_run_prints_observation_payload(monkeypatch):
+    monkeypatch.setattr(
+        "aria.__main__._build_harness_dry_run_payload",
+        lambda goal, subtask, success_condition, apps: {
+            "status": "dry_run",
+            "goal": goal,
+            "subtask": subtask,
+            "success_condition": success_condition,
+            "apps": apps,
+            "screenshot_path": "/tmp/screen.png",
+            "screen_size": [800, 600],
+            "candidate_count": 0,
+            "will_execute": False,
+        },
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "harness-once",
+            "--goal",
+            "send a note",
+            "--subtask",
+            "find the input",
+            "--success",
+            "input is visible",
+            "--app",
+            "chrome",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert '"status": "dry_run"' in result.stdout
+    assert '"goal": "send a note"' in result.stdout
+    assert '"apps": [' in result.stdout
+    assert '"chrome"' in result.stdout
+    assert '"will_execute": false' in result.stdout
+
+
+def test_harness_once_requires_dry_run_until_execution_is_wired():
+    result = CliRunner().invoke(
+        app,
+        [
+            "harness-once",
+            "--goal",
+            "send a note",
+            "--subtask",
+            "find the input",
+            "--success",
+            "input is visible",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Only --dry-run is wired" in result.stdout

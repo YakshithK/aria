@@ -5,6 +5,7 @@ from aria.harness.models import ActionProposal, Candidate, ObservationBundle, Va
 
 CONFIDENCE_THRESHOLD = 0.60
 _LOW_CONFIDENCE_ALLOWED = {"wait", "fail"}
+_SUPPORTED_SCROLL_DIRECTIONS = {"up", "down"}
 _DESTRUCTIVE_TERMS = frozenset(
     {
         "delete",
@@ -58,6 +59,8 @@ def validate_action(
             return _reject("scroll requires x and y coordinates")
         if proposal.direction is None or proposal.amount is None:
             return _reject("scroll requires direction and amount")
+        if proposal.direction not in _SUPPORTED_SCROLL_DIRECTIONS:
+            return _reject(f"unsupported scroll direction: {proposal.direction}")
         if proposal.amount <= 0:
             return _reject("scroll amount must be positive")
         if not _inside_screen(proposal.x, proposal.y, bundle.screen_size):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from typing import Any
 
@@ -45,27 +46,23 @@ Allowed JSON:
 """
 
 
-def build_actor_messages(bundle: ObservationBundle) -> list[dict[str, Any]]:
+def build_actor_messages(
+    bundle: ObservationBundle,
+    *,
+    image_bytes: bytes | None = None,
+    image_mime_type: str = "image/png",
+) -> list[dict[str, Any]]:
+    user_content = _bundle_json(bundle)
+    if image_bytes is not None:
+        content: str | list[dict[str, Any]] = [
+            {"type": "text", "text": user_content},
+            _image_part(image_bytes, image_mime_type),
+        ]
+    else:
+        content = user_content
     return [
         {"role": "system", "content": ACTOR_SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": json.dumps(
-                {
-                    "goal": bundle.goal,
-                    "subtask": bundle.subtask,
-                    "success_condition": bundle.success_condition,
-                    "screenshot_path": bundle.screenshot_path,
-                    "screen_size": bundle.screen_size,
-                    "focused_window": _model_or_none(bundle.focused_window),
-                    "windows": [_model_or_none(window) for window in bundle.windows],
-                    "candidates": [_candidate_context(candidate) for candidate in bundle.candidates],
-                    "recent_actions": [_model_or_none(action) for action in bundle.recent_actions],
-                    "turn": bundle.turn,
-                },
-                ensure_ascii=True,
-            ),
-        },
+        {"role": "user", "content": content},
     ]
 
 
@@ -74,30 +71,65 @@ def build_verifier_messages(
     before: ObservationBundle,
     after: ObservationBundle,
     executed_action: dict[str, Any],
+    before_image_bytes: bytes | None = None,
+    after_image_bytes: bytes | None = None,
+    image_mime_type: str = "image/png",
 ) -> list[dict[str, Any]]:
+    user_content = json.dumps(
+        {
+            "goal": before.goal,
+            "subtask": before.subtask,
+            "success_condition": before.success_condition,
+            "before": {
+                "screenshot_path": before.screenshot_path,
+                "candidates": [_candidate_context(candidate) for candidate in before.candidates],
+            },
+            "after": {
+                "screenshot_path": after.screenshot_path,
+                "candidates": [_candidate_context(candidate) for candidate in after.candidates],
+            },
+            "executed_action": executed_action,
+        },
+        ensure_ascii=True,
+    )
+    if before_image_bytes is not None or after_image_bytes is not None:
+        content: str | list[dict[str, Any]] = [{"type": "text", "text": user_content}]
+        if before_image_bytes is not None:
+            content.append(_image_part(before_image_bytes, image_mime_type))
+        if after_image_bytes is not None:
+            content.append(_image_part(after_image_bytes, image_mime_type))
+    else:
+        content = user_content
     return [
         {"role": "system", "content": VERIFIER_SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": json.dumps(
-                {
-                    "goal": before.goal,
-                    "subtask": before.subtask,
-                    "success_condition": before.success_condition,
-                    "before": {
-                        "screenshot_path": before.screenshot_path,
-                        "candidates": [_candidate_context(candidate) for candidate in before.candidates],
-                    },
-                    "after": {
-                        "screenshot_path": after.screenshot_path,
-                        "candidates": [_candidate_context(candidate) for candidate in after.candidates],
-                    },
-                    "executed_action": executed_action,
-                },
-                ensure_ascii=True,
-            ),
-        },
+        {"role": "user", "content": content},
     ]
+
+
+def _bundle_json(bundle: ObservationBundle) -> str:
+    return json.dumps(
+        {
+            "goal": bundle.goal,
+            "subtask": bundle.subtask,
+            "success_condition": bundle.success_condition,
+            "screenshot_path": bundle.screenshot_path,
+            "screen_size": bundle.screen_size,
+            "focused_window": _model_or_none(bundle.focused_window),
+            "windows": [_model_or_none(window) for window in bundle.windows],
+            "candidates": [_candidate_context(candidate) for candidate in bundle.candidates],
+            "recent_actions": [_model_or_none(action) for action in bundle.recent_actions],
+            "turn": bundle.turn,
+        },
+        ensure_ascii=True,
+    )
+
+
+def _image_part(image_bytes: bytes, mime_type: str) -> dict[str, Any]:
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
+    }
 
 
 def _candidate_context(candidate: Any) -> dict[str, Any]:

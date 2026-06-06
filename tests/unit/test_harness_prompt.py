@@ -56,3 +56,33 @@ def test_verifier_prompt_contains_before_after_and_success_condition():
     assert "failed" in text
     assert "A search input is visible" in text
     assert "/tmp/after.png" in text
+
+
+def test_actor_prompt_can_include_image_bytes_as_data_url():
+    messages = build_actor_messages(bundle(), image_bytes=b"fake png")
+    content = messages[1]["content"]
+
+    assert isinstance(content, list)
+    assert content[0]["type"] == "text"
+    assert content[1] == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/png;base64,ZmFrZSBwbmc="},
+    }
+
+
+def test_verifier_prompt_can_include_before_and_after_images():
+    messages = build_verifier_messages(
+        before=bundle(),
+        after=bundle().model_copy(update={"screenshot_path": "/tmp/after.png", "turn": 2}),
+        executed_action={"type": "click_element", "candidate_id": "candidate_1"},
+        before_image_bytes=b"before",
+        after_image_bytes=b"after",
+    )
+    content = messages[1]["content"]
+
+    assert isinstance(content, list)
+    urls = [part["image_url"]["url"] for part in content if part["type"] == "image_url"]
+    assert urls == [
+        "data:image/png;base64,YmVmb3Jl",
+        "data:image/png;base64,YWZ0ZXI=",
+    ]

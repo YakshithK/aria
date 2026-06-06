@@ -77,6 +77,29 @@ def test_json_vlm_actor_parses_action_proposal_and_uses_model():
     assert client.calls[0]["model"] == "raw-vlm"
 
 
+def test_json_vlm_actor_can_send_image_bytes():
+    client = FakeClient(
+        json.dumps(
+            {
+                "type": "click_element",
+                "candidate_id": "candidate_1",
+                "confidence": 0.8,
+                "evidence": "Search is visible.",
+            }
+        )
+    )
+
+    JsonVLMActor(
+        client=client,
+        model="raw-vlm",
+        image_loader=lambda path: b"fake png",
+    ).propose(bundle())
+
+    content = client.calls[0]["messages"][1]["content"]
+    assert isinstance(content, list)
+    assert content[1]["image_url"]["url"] == "data:image/png;base64,ZmFrZSBwbmc="
+
+
 def test_json_vlm_verifier_parses_verification_result():
     client = FakeClient(
         json.dumps(
@@ -98,6 +121,38 @@ def test_json_vlm_verifier_parses_verification_result():
 
     assert result.status == "complete"
     assert result.evidence == "The search input is visible."
+
+
+def test_json_vlm_verifier_can_send_before_and_after_images():
+    client = FakeClient(
+        json.dumps(
+            {
+                "status": "complete",
+                "confidence": 0.8,
+                "evidence": "The search input is visible.",
+                "next_hint": None,
+            }
+        )
+    )
+
+    JsonVLMVerifier(
+        client=client,
+        model="raw-vlm",
+        image_loader=lambda path: path.encode("utf-8"),
+    ).verify(
+        before=bundle().model_copy(update={"screenshot_path": "before"}),
+        after=bundle().model_copy(update={"screenshot_path": "after"}),
+        action={"type": "click_element", "candidate_id": "candidate_1"},
+        execution={"ok": True},
+    )
+
+    content = client.calls[0]["messages"][1]["content"]
+    assert isinstance(content, list)
+    urls = [part["image_url"]["url"] for part in content if part["type"] == "image_url"]
+    assert urls == [
+        "data:image/png;base64,YmVmb3Jl",
+        "data:image/png;base64,YWZ0ZXI=",
+    ]
 
 
 def test_json_vlm_actor_returns_fail_action_for_malformed_response():

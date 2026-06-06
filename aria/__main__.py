@@ -22,6 +22,7 @@ from aria.app_discovery import (
 from aria.backends.cdp import CDPBackend
 from aria.conductor.local import LocalConductor
 from aria.conductor.registry import WindowRegistry
+from aria.harness.observe import PillowScreenshotCapture, build_observation_bundle
 from aria.launcher import (
     launch_app,
 )
@@ -126,6 +127,27 @@ def run(
     _print_json(result)
 
 
+@app.command("harness-once")
+def harness_once(
+    goal: str = typer.Option(..., "--goal", help="Overall user goal."),
+    subtask: str = typer.Option(..., "--subtask", help="Single bite-sized harness subtask."),
+    success_condition: str = typer.Option(..., "--success", help="Observable success condition."),
+    apps: list[str] = typer.Option([], "--app", help="Optional app hints for future semantic adapters."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Capture observation only; do not call models or execute actions."),
+) -> None:
+    """Capture one harness observation for a subtask."""
+    if not dry_run:
+        console.print("[red]Error:[/red] Only --dry-run is wired for harness-once in this milestone.")
+        raise typer.Exit(1)
+
+    try:
+        result = _build_harness_dry_run_payload(goal, subtask, success_condition, apps)
+    except Exception as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    _print_json(result)
+
+
 @app.command()
 def daemon(action: str = typer.Argument("start")) -> None:
     """Start the background daemon on 127.0.0.1:7823."""
@@ -195,6 +217,33 @@ def stream_task_from_daemon(task: str, apps: list[str]) -> dict[str, object]:
             elif event.get("type") == "result":
                 final_result = event
     return final_result or {"status": "failed", "message": "Daemon stream ended without result."}
+
+
+def _build_harness_dry_run_payload(
+    goal: str,
+    subtask: str,
+    success_condition: str,
+    apps: list[str],
+) -> dict[str, object]:
+    bundle, screenshot = build_observation_bundle(
+        goal=goal,
+        subtask=subtask,
+        success_condition=success_condition,
+        capture=PillowScreenshotCapture(),
+    )
+    return {
+        "status": "dry_run",
+        "goal": bundle.goal,
+        "subtask": bundle.subtask,
+        "success_condition": bundle.success_condition,
+        "apps": apps,
+        "screenshot_path": bundle.screenshot_path,
+        "screen_size": list(bundle.screen_size),
+        "candidate_count": len(bundle.candidates),
+        "image_mime_type": screenshot.mime_type,
+        "image_bytes": len(screenshot.image_bytes),
+        "will_execute": False,
+    }
 
 
 def _print_json(data: object) -> None:

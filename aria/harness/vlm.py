@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from pydantic import ValidationError
@@ -17,19 +18,31 @@ class CompletionClient(Protocol):
 class JsonVLMActor:
     """JSON-only actor adapter.
 
-    Milestone 1 sends screenshot paths and structured candidates as text context.
-    Encoding image bytes for true multimodal calls is a later observer/client concern.
+    If image_loader is provided, the actor sends screenshot bytes as a multimodal
+    image_url part alongside the structured candidate context.
     """
 
-    def __init__(self, *, client: CompletionClient, model: str) -> None:
+    def __init__(
+        self,
+        *,
+        client: CompletionClient,
+        model: str,
+        image_loader: Callable[[str], bytes] | None = None,
+    ) -> None:
         self.client = client
         self.model = model
+        self.image_loader = image_loader
 
     def propose(self, observation: ObservationBundle) -> ActionProposal:
         try:
+            image_bytes = (
+                self.image_loader(observation.screenshot_path)
+                if self.image_loader is not None
+                else None
+            )
             response = self.client.create_completion(
                 model=self.model,
-                messages=build_actor_messages(observation),
+                messages=build_actor_messages(observation, image_bytes=image_bytes),
                 temperature=0,
             )
             return ActionProposal(**_json_from_response(response))
@@ -43,9 +56,16 @@ class JsonVLMActor:
 
 
 class JsonVLMVerifier:
-    def __init__(self, *, client: CompletionClient, model: str) -> None:
+    def __init__(
+        self,
+        *,
+        client: CompletionClient,
+        model: str,
+        image_loader: Callable[[str], bytes] | None = None,
+    ) -> None:
         self.client = client
         self.model = model
+        self.image_loader = image_loader
 
     def verify(
         self,
@@ -57,6 +77,16 @@ class JsonVLMVerifier:
     ) -> VerificationResult:
         action_dict = action.model_dump(exclude_none=True) if hasattr(action, "model_dump") else dict(action)
         try:
+            before_image_bytes = (
+                self.image_loader(before.screenshot_path)
+                if self.image_loader is not None
+                else None
+            )
+            after_image_bytes = (
+                self.image_loader(after.screenshot_path)
+                if self.image_loader is not None
+                else None
+            )
             response = self.client.create_completion(
                 model=self.model,
                 messages=build_verifier_messages(
@@ -66,6 +96,8 @@ class JsonVLMVerifier:
                         "action": action_dict,
                         "execution": execution,
                     },
+                    before_image_bytes=before_image_bytes,
+                    after_image_bytes=after_image_bytes,
                 ),
                 temperature=0,
             )

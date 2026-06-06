@@ -275,6 +275,24 @@ def test_scroll_requires_direction_and_amount():
     assert "direction" in result.reason.lower()
 
 
+def test_scroll_rejects_horizontal_directions_until_executor_supports_them():
+    result = validate_action(
+        ActionProposal(
+            type="scroll",
+            x=10,
+            y=10,
+            direction="left",
+            amount=1,
+            confidence=0.8,
+            evidence="wide list visible",
+        ),
+        make_bundle().model_copy(update={"candidates": []}),
+    )
+
+    assert result.ok is False
+    assert "unsupported scroll direction" in result.reason.lower()
+
+
 def test_wait_requires_positive_seconds():
     result = validate_action(
         ActionProposal(type="wait", seconds=-1, reason="loading", confidence=0.8, evidence="spinner"),
