@@ -1,6 +1,7 @@
 # gstack operational files (local only)
 .claude/*
 .firecrawl/
+.aria/
 docs/superpowers/plans/*.md
 docs/superpowers/specs/*.md
 

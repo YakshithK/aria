@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import tempfile
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -30,7 +31,12 @@ class PillowScreenshotCapture:
     def capture(self) -> CapturedScreenshot:
         from PIL import ImageGrab
 
-        image = ImageGrab.grab()
+        try:
+            image = ImageGrab.grab()
+        except Exception:
+            if _is_wsl() and _default_powershell_path().exists():
+                return WslWindowsScreenshotCapture().capture()
+            raise
         output_dir = self.output_dir or Path(tempfile.gettempdir())
         output_dir.mkdir(parents=True, exist_ok=True)
         handle = tempfile.NamedTemporaryFile(
@@ -48,6 +54,43 @@ class PillowScreenshotCapture:
             path=path,
             width=int(image.width),
             height=int(image.height),
+            image_bytes=image_bytes,
+            mime_type="image/png",
+        )
+
+
+class WslWindowsScreenshotCapture:
+    def __init__(
+        self,
+        *,
+        powershell_path: Path | None = None,
+        run_command: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+        windows_to_wsl_path: Callable[[str], Path] | None = None,
+    ) -> None:
+        self.powershell_path = powershell_path or _default_powershell_path()
+        self.run_command = run_command
+        self.windows_to_wsl_path = windows_to_wsl_path or _windows_path_to_wsl_path
+
+    def capture(self) -> CapturedScreenshot:
+        script = _powershell_screenshot_script()
+        completed = self.run_command(
+            [str(self.powershell_path), "-NoProfile", "-Command", script],
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+        line = completed.stdout.strip().splitlines()[-1] if completed.stdout.strip() else ""
+        parts = line.split("|")
+        if len(parts) != 3:
+            raise RuntimeError(f"unexpected PowerShell screenshot output: {line}")
+        windows_path, width, height = parts
+        path = self.windows_to_wsl_path(windows_path)
+        image_bytes = path.read_bytes()
+        path.unlink()
+        return CapturedScreenshot(
+            path=path,
+            width=int(width),
+            height=int(height),
             image_bytes=image_bytes,
             mime_type="image/png",
         )
@@ -89,3 +132,37 @@ def build_observation_bundle(
         turn=turn,
     )
     return bundle, screenshot
+
+
+def _is_wsl() -> bool:
+    try:
+        version = Path("/proc/version").read_text(encoding="utf-8").lower()
+    except OSError:
+        return False
+    return "microsoft" in version or "wsl" in version
+
+
+def _default_powershell_path() -> Path:
+    return Path("/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe")
+
+
+def _windows_path_to_wsl_path(path: str) -> Path:
+    drive, rest = path.split(":", 1)
+    normalized = rest.lstrip("\\/").replace("\\", "/")
+    return Path("/mnt") / drive.lower() / normalized
+
+
+def _powershell_screenshot_script() -> str:
+    return r"""
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+$bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+$graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+$path = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), ("aria-harness-screen-" + [System.Guid]::NewGuid().ToString() + ".png"))
+$bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+$graphics.Dispose()
+$bitmap.Dispose()
+Write-Output ($path + "|" + $bounds.Width + "|" + $bounds.Height)
+"""

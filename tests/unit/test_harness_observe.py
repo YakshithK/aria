@@ -1,7 +1,8 @@
 from pathlib import Path
+import subprocess
 
 from aria.harness.models import ActionRecord, Candidate
-from aria.harness.observe import CapturedScreenshot, build_observation_bundle
+from aria.harness.observe import CapturedScreenshot, WslWindowsScreenshotCapture, build_observation_bundle
 
 
 class FakeCapture:
@@ -77,3 +78,50 @@ def test_captured_screenshot_accepts_path_values(tmp_path):
     )
 
     assert str(screenshot.path).endswith("screen.png")
+
+
+def test_wsl_windows_screenshot_capture_reads_windows_png(tmp_path):
+    screenshot_path = tmp_path / "screen.png"
+    screenshot_path.write_bytes(b"png")
+    calls = []
+
+    def fake_run(command, capture_output, check, text):
+        calls.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="C:\\Temp\\screen.png|640|480\n",
+            stderr="",
+        )
+
+    capture = WslWindowsScreenshotCapture(
+        run_command=fake_run,
+        windows_to_wsl_path=lambda path: screenshot_path,
+    )
+
+    screenshot = capture.capture()
+
+    assert calls
+    assert "CopyFromScreen" in calls[0][-1]
+    assert screenshot.path == screenshot_path
+    assert screenshot.width == 640
+    assert screenshot.height == 480
+    assert screenshot.image_bytes == b"png"
+    assert not screenshot_path.exists()
+
+
+def test_wsl_windows_screenshot_capture_reports_bad_powershell_output(tmp_path):
+    def fake_run(command, capture_output, check, text):
+        return subprocess.CompletedProcess(command, 0, stdout="bad output\n", stderr="")
+
+    capture = WslWindowsScreenshotCapture(
+        run_command=fake_run,
+        windows_to_wsl_path=lambda path: tmp_path / "screen.png",
+    )
+
+    try:
+        capture.capture()
+    except RuntimeError as exc:
+        assert "unexpected PowerShell screenshot output" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
