@@ -93,6 +93,26 @@ def test_json_vlm_actor_parses_action_proposal_and_uses_model():
     assert client.calls[0]["model"] == "raw-vlm"
 
 
+def test_json_vlm_actor_normalizes_coordinate_pair_in_x_field():
+    client = FakeClient(
+        json.dumps(
+            {
+                "type": "click",
+                "x": [749, 440],
+                "confidence": 0.8,
+                "evidence": "search input center",
+            }
+        )
+    )
+
+    proposal = JsonVLMActor(client=client, model="raw-vlm").propose(bundle())
+
+    assert proposal.type == "click"
+    assert proposal.x == 749
+    assert proposal.y == 440
+    assert len(client.calls) == 1
+
+
 def test_json_vlm_actor_repairs_unknown_candidate_action_to_raw_action():
     empty_bundle = bundle().model_copy(update={"candidates": []})
     client = SequenceClient(

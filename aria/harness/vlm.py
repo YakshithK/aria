@@ -73,7 +73,7 @@ class JsonVLMActor:
                 messages=messages,
                 temperature=0,
             )
-            proposal = ActionProposal(**_json_from_response(response))
+            proposal = ActionProposal(**_action_json_from_response(response))
         except (ValueError, ValidationError) as exc:
             return self._repair_invalid_actor_response(
                 observation=observation,
@@ -91,7 +91,7 @@ class JsonVLMActor:
                 messages=_repair_messages(messages, proposal, repair_reason),
                 temperature=0,
             )
-            repaired = ActionProposal(**_json_from_response(repair_response))
+            repaired = ActionProposal(**_action_json_from_response(repair_response))
             repaired_reason = _candidate_action_error(repaired, observation)
             if repaired_reason is None:
                 return repaired
@@ -123,7 +123,7 @@ class JsonVLMActor:
                 messages=_json_repair_messages(messages, previous_content, reason),
                 temperature=0,
             )
-            repaired = ActionProposal(**_json_from_response(repair_response))
+            repaired = ActionProposal(**_action_json_from_response(repair_response))
             repaired_reason = _candidate_action_error(repaired, observation)
             if repaired_reason is None:
                 return repaired
@@ -206,6 +206,24 @@ def _json_from_response(response: Any) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("VLM response must decode to a JSON object")
     return data
+
+
+def _action_json_from_response(response: Any) -> dict[str, Any]:
+    return _normalize_action_json(_json_from_response(response))
+
+
+def _normalize_action_json(data: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(data)
+    x_value = normalized.get("x")
+    if (
+        normalized.get("type") in {"click", "scroll"}
+        and isinstance(x_value, list)
+        and len(x_value) == 2
+        and "y" not in normalized
+    ):
+        normalized["x"] = x_value[0]
+        normalized["y"] = x_value[1]
+    return normalized
 
 
 def _response_content(response: Any) -> Any:
