@@ -165,9 +165,9 @@ def test_setup_command_writes_default_harness_config(tmp_path):
     assert output["status"] == "complete"
     assert output["config_path"] == str(config_path)
     config = load_harness_config(config_path)
-    assert config.actor.provider == "groq"
-    assert config.actor.model == "meta-llama/llama-4-scout-17b-16e-instruct"
-    assert output["api_key_env"] == "GROQ_API_KEY"
+    assert config.actor.provider == "hackclub"
+    assert config.actor.model == "bytedance/ui-tars-1.5-7b"
+    assert output["api_key_env"] == "HACKCLUB_API_KEY"
     assert config.safety.approval_mode == "always"
     assert config.trace.output_dir == config_path.parent / "runs"
 

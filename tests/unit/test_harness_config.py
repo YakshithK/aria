@@ -12,14 +12,14 @@ from aria.harness.config import (
 )
 
 
-def test_default_config_requires_approval_and_uses_groq_vision_model():
+def test_default_config_requires_approval_and_uses_hackclub_vision_model():
     config = HarnessConfig()
 
-    assert config.actor.provider == "groq"
-    assert config.actor.model == "meta-llama/llama-4-scout-17b-16e-instruct"
-    assert config.actor.api_key_env == "GROQ_API_KEY"
-    assert config.verifier.provider == "groq"
-    assert config.planner.provider == "groq"
+    assert config.actor.provider == "hackclub"
+    assert config.actor.model == "bytedance/ui-tars-1.5-7b"
+    assert config.actor.api_key_env == "HACKCLUB_API_KEY"
+    assert config.verifier.provider == "hackclub"
+    assert config.planner.provider == "hackclub"
     assert config.safety.approval_mode == "always"
     assert config.safety.allow_destructive_actions is False
     assert config.safety.max_turns_per_subtask == 3

@@ -17,6 +17,19 @@ def test_build_completion_client_rejects_missing_groq_api_key(monkeypatch):
         )
 
 
+def test_build_completion_client_rejects_missing_hackclub_api_key(monkeypatch):
+    monkeypatch.delenv("HACKCLUB_API_KEY", raising=False)
+
+    with pytest.raises(ProviderError, match="missing API key env var: HACKCLUB_API_KEY"):
+        build_completion_client(
+            ModelConfig(
+                provider="hackclub",
+                model="bytedance/ui-tars-1.5-7b",
+                api_key_env="HACKCLUB_API_KEY",
+            )
+        )
+
+
 def test_build_completion_client_rejects_unknown_provider(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
 
@@ -38,6 +51,22 @@ def test_build_completion_client_creates_groq_openai_compatible_client(monkeypat
     assert isinstance(client, OpenAICompatibleCompletionClient)
     assert client.api_key == "test-key"
     assert client.base_url == "https://api.groq.com/openai/v1"
+
+
+def test_build_completion_client_creates_hackclub_openai_compatible_client(monkeypatch):
+    monkeypatch.setenv("HACKCLUB_API_KEY", "test-key")
+
+    client = build_completion_client(
+        ModelConfig(
+            provider="hackclub",
+            model="bytedance/ui-tars-1.5-7b",
+            api_key_env="HACKCLUB_API_KEY",
+        )
+    )
+
+    assert isinstance(client, OpenAICompatibleCompletionClient)
+    assert client.api_key == "test-key"
+    assert client.base_url == "https://ai.hackclub.com/proxy/v1"
 
 
 def test_build_completion_client_still_supports_openai(monkeypatch):

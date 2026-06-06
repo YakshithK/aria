@@ -8,6 +8,7 @@ from openai import OpenAI
 from aria.harness.config import ModelConfig
 
 GROQ_OPENAI_BASE_URL = "https://api.groq.com/openai/v1"
+HACKCLUB_OPENAI_BASE_URL = "https://ai.hackclub.com/proxy/v1"
 
 
 class ProviderError(RuntimeError):
@@ -38,10 +39,14 @@ class OpenAICompatibleCompletionClient:
 
 
 def build_completion_client(config: ModelConfig) -> OpenAICompatibleCompletionClient:
-    if config.provider not in {"openai", "groq"}:
+    if config.provider not in {"openai", "groq", "hackclub"}:
         raise ProviderError(f"unsupported provider: {config.provider}")
     api_key = os.getenv(config.api_key_env)
     if not api_key:
         raise ProviderError(f"missing API key env var: {config.api_key_env}")
-    base_url = GROQ_OPENAI_BASE_URL if config.provider == "groq" else None
+    base_urls = {
+        "groq": GROQ_OPENAI_BASE_URL,
+        "hackclub": HACKCLUB_OPENAI_BASE_URL,
+    }
+    base_url = base_urls.get(config.provider)
     return OpenAICompatibleCompletionClient(api_key=api_key, base_url=base_url)

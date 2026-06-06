@@ -10,12 +10,13 @@ from pydantic import BaseModel, Field
 ApprovalMode = Literal["always", "never", "on_risk"]
 DEFAULT_CONFIG_PATH = Path(".aria/config.json")
 DEFAULT_GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+DEFAULT_HACKCLUB_VISION_MODEL = "bytedance/ui-tars-1.5-7b"
 
 
 class ModelConfig(BaseModel):
-    provider: str = "groq"
-    model: str = DEFAULT_GROQ_VISION_MODEL
-    api_key_env: str = "GROQ_API_KEY"
+    provider: str = "hackclub"
+    model: str = DEFAULT_HACKCLUB_VISION_MODEL
+    api_key_env: str = "HACKCLUB_API_KEY"
 
 
 class SafetyConfig(BaseModel):

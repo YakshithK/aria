@@ -38,7 +38,7 @@ def test_doctor_passes_required_checks_with_optional_pixel_and_cdp_warnings(tmp_
     config_path = tmp_path / ".aria" / "config.json"
     config = HarnessConfig()
     save_harness_config(config_path, config)
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("HACKCLUB_API_KEY", "test-key")
 
     result = run_harness_doctor(
         config_path=config_path,
@@ -57,7 +57,7 @@ def test_doctor_passes_required_checks_with_optional_pixel_and_cdp_warnings(tmp_
 
 
 def test_doctor_fails_when_config_is_missing(tmp_path, monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("HACKCLUB_API_KEY", raising=False)
 
     result = run_harness_doctor(
         config_path=tmp_path / ".aria" / "missing.json",
@@ -74,7 +74,7 @@ def test_doctor_fails_when_config_is_missing(tmp_path, monkeypatch):
 def test_doctor_fails_when_screenshot_capture_fails(tmp_path, monkeypatch):
     config_path = tmp_path / ".aria" / "config.json"
     save_harness_config(config_path, HarnessConfig())
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("HACKCLUB_API_KEY", "test-key")
 
     result = run_harness_doctor(
         config_path=config_path,
