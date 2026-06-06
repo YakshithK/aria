@@ -32,6 +32,7 @@ class SemanticHarnessObserver:
     ) -> None:
         self.semantic_observer = semantic_observer
         self.capture = capture
+        self._bytes: dict[str, bytes] = {}
 
     def observe(
         self,
@@ -41,7 +42,7 @@ class SemanticHarnessObserver:
         success_condition: str,
         recent_actions: list[ActionRecord],
     ) -> ObservationBundle:
-        bundle, _ = build_observation_bundle(
+        bundle, screenshot = build_observation_bundle(
             goal=goal,
             subtask=subtask,
             success_condition=success_condition,
@@ -49,7 +50,11 @@ class SemanticHarnessObserver:
             candidates=self.semantic_observer.observe(),
             recent_actions=recent_actions,
         )
+        self._bytes[str(screenshot.path)] = screenshot.image_bytes
         return bundle
+
+    def image_loader(self, path: str) -> bytes:
+        return self._bytes[path]
 
 
 class LocalSemanticExecutor:

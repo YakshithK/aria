@@ -277,8 +277,8 @@ def _build_harness_preview_payload(
         raise FileNotFoundError(f"config not found: {config_path}. Run `aria setup` or pass --config.")
     config = load_harness_config(config_path)
     client = build_completion_client(config.actor)
-    actor = build_json_vlm_actor(client=client, config=config.actor)
     observer = _build_preview_observer(apps)
+    actor = build_json_vlm_actor(client=client, config=config.actor, image_loader=observer.image_loader)
     preview = preview_turn(
         goal=goal,
         subtask=subtask,
@@ -323,16 +323,21 @@ def _build_preview_observer(apps: list[str]):
 class _ScreenshotOnlyObserver:
     def __init__(self, capture: PillowScreenshotCapture) -> None:
         self.capture = capture
+        self._bytes: dict[str, bytes] = {}
 
     def observe(self, *, goal, subtask, success_condition, recent_actions):
-        bundle, _ = build_observation_bundle(
+        bundle, screenshot = build_observation_bundle(
             goal=goal,
             subtask=subtask,
             success_condition=success_condition,
             capture=self.capture,
             recent_actions=recent_actions,
         )
+        self._bytes[str(screenshot.path)] = screenshot.image_bytes
         return bundle
+
+    def image_loader(self, path: str) -> bytes:
+        return self._bytes[path]
 
 
 def _print_json(data: object) -> None:

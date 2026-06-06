@@ -154,6 +154,19 @@ def test_harness_observer_composes_semantic_candidates_with_screenshot_bundle():
     assert bundle.recent_actions == recent_actions
 
 
+def test_observer_image_loader_returns_screenshot_bytes():
+    conductor = SyncObservationConductor(semantic_map_json())
+    observer = SemanticHarnessObserver(
+        semantic_observer=SemanticObserverAdapter(conductor),
+        capture=FakeCapture(),
+    )
+    observer.observe(
+        goal="g", subtask="s", success_condition="c", recent_actions=[]
+    )
+
+    assert observer.image_loader("/tmp/screen.png") == b"png"
+
+
 def test_observer_supports_async_get_current_state():
     conductor = AsyncObservationConductor(semantic_map_json())
     adapter = SemanticObserverAdapter(conductor)

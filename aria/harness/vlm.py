@@ -17,11 +17,16 @@ class CompletionClient(Protocol):
         ...
 
 
-def build_json_vlm_actor(*, client: CompletionClient, config: ModelConfig) -> "JsonVLMActor":
+def build_json_vlm_actor(
+    *,
+    client: CompletionClient,
+    config: ModelConfig,
+    image_loader: Callable[[str], bytes] | None = None,
+) -> "JsonVLMActor":
     return JsonVLMActor(
         client=client,
         model=config.model,
-        image_loader=load_image_bytes,
+        image_loader=image_loader if image_loader is not None else load_image_bytes,
     )
 
 
