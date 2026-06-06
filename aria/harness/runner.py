@@ -114,7 +114,10 @@ def run_approved_turn(
             "preview": preview_payload,
             "execution": None,
         }
-    execution = executor.execute(preview.proposal, preview.validation, preview.observation)
+    try:
+        execution = executor.execute(preview.proposal, preview.validation, preview.observation)
+    except Exception as exc:
+        execution = {"ok": False, "error": str(exc)}
     if execution.get("ok") is False:
         return {
             "ok": False,

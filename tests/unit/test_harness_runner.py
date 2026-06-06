@@ -110,6 +110,15 @@ class RecordingExecutor:
         return self.result
 
 
+class RaisingExecutor:
+    def __init__(self):
+        self.calls = []
+
+    def execute(self, proposal, validation, observation):
+        self.calls.append((proposal, validation, observation))
+        raise RuntimeError("backend crashed")
+
+
 def preview_observation():
     return ObservationBundle(
         goal="Search",
@@ -319,6 +328,37 @@ def test_approved_turn_reports_executor_failure():
     assert result["status"] == "execution_failed"
     assert result["error"] == "executor unavailable"
     assert result["execution"]["ok"] is False
+
+
+def test_approved_turn_normalizes_executor_exceptions():
+    observation = preview_observation()
+    observer = PreviewObserver(observation)
+    actor = PreviewActor(
+        ActionProposal(
+            type="wait",
+            seconds=1,
+            reason="loading",
+            confidence=0.8,
+            evidence="screen is visible",
+        )
+    )
+    executor = RaisingExecutor()
+
+    result = run_approved_turn(
+        goal="Search",
+        subtask="Find input",
+        success_condition="input visible",
+        observer=observer,
+        actor=actor,
+        executor=executor,
+        approve=lambda preview: True,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "execution_failed"
+    assert result["error"] == "backend crashed"
+    assert result["execution"] == {"ok": False, "error": "backend crashed"}
+    assert len(executor.calls) == 1
 
 
 def test_runner_completes_when_verifier_returns_complete():
