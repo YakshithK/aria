@@ -103,6 +103,8 @@ def test_wsl_windows_screenshot_capture_reads_windows_png(tmp_path):
 
     assert calls
     assert "CopyFromScreen" in calls[0][-1]
+    assert "SystemInformation]::VirtualScreen" in calls[0][-1]
+    assert "PrimaryScreen" not in calls[0][-1]
     assert screenshot.path == screenshot_path
     assert screenshot.width == 640
     assert screenshot.height == 480
