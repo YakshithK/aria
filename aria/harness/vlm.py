@@ -57,6 +57,7 @@ class JsonVLMActor:
         self.image_loader = image_loader
 
     def propose(self, observation: ObservationBundle) -> ActionProposal:
+        image_bytes = None
         try:
             image_bytes = (
                 self.image_loader(observation.screenshot_path)
@@ -70,6 +71,15 @@ class JsonVLMActor:
                 temperature=0,
             )
             proposal = ActionProposal(**_json_from_response(response))
+        except (ValueError, ValidationError) as exc:
+            return self._repair_invalid_actor_response(
+                observation=observation,
+                messages=build_actor_messages(observation, image_bytes=image_bytes),
+                reason=f"invalid JSON/schema: {exc}",
+                previous_content=_response_content(response) if "response" in locals() else None,
+            )
+
+        try:
             repair_reason = _candidate_action_error(proposal, observation)
             if repair_reason is None:
                 return proposal
@@ -93,6 +103,38 @@ class JsonVLMActor:
                 type="fail",
                 confidence=1.0,
                 evidence=f"VLM actor returned invalid action JSON: {exc}",
+                reason="invalid_vlm_action",
+            )
+
+    def _repair_invalid_actor_response(
+        self,
+        *,
+        observation: ObservationBundle,
+        messages: list[dict[str, Any]],
+        reason: str,
+        previous_content: str | None,
+    ) -> ActionProposal:
+        try:
+            repair_response = self.client.create_completion(
+                model=self.model,
+                messages=_json_repair_messages(messages, previous_content, reason),
+                temperature=0,
+            )
+            repaired = ActionProposal(**_json_from_response(repair_response))
+            repaired_reason = _candidate_action_error(repaired, observation)
+            if repaired_reason is None:
+                return repaired
+            return ActionProposal(
+                type="fail",
+                confidence=1.0,
+                evidence=f"VLM actor returned invalid action after repair: {repaired_reason}",
+                reason="invalid_vlm_action",
+            )
+        except (ValueError, ValidationError) as exc:
+            return ActionProposal(
+                type="fail",
+                confidence=1.0,
+                evidence=f"VLM actor returned invalid action JSON after repair: {exc}",
                 reason="invalid_vlm_action",
             )
 
@@ -154,13 +196,17 @@ class JsonVLMVerifier:
 
 
 def _json_from_response(response: Any) -> dict[str, Any]:
-    content = response.choices[0].message.content
+    content = _response_content(response)
     if not isinstance(content, str):
         raise ValueError("VLM response content must be a JSON string")
     data = json.loads(content)
     if not isinstance(data, dict):
         raise ValueError("VLM response must decode to a JSON object")
     return data
+
+
+def _response_content(response: Any) -> Any:
+    return response.choices[0].message.content
 
 
 def _candidate_action_error(proposal: ActionProposal, observation: ObservationBundle) -> str | None:
@@ -188,6 +234,25 @@ def _repair_messages(
                 f"Your previous action is invalid: {reason}. Return exactly one corrected JSON action. "
                 "Use a raw click with screenshot coordinates when no listed candidate_id exists. "
                 "Do not invent candidate IDs."
+            ),
+        },
+    ]
+
+
+def _json_repair_messages(
+    messages: list[dict[str, Any]],
+    previous_content: str | None,
+    reason: str,
+) -> list[dict[str, Any]]:
+    previous = previous_content if previous_content is not None else "<non-string response>"
+    return [
+        *messages,
+        {"role": "assistant", "content": previous},
+        {
+            "role": "user",
+            "content": (
+                f"Your previous response was invalid: {reason}. Return exactly one valid JSON object "
+                "matching one allowed action type. Do not return prose, markdown, comments, or trailing text."
             ),
         },
     ]

@@ -294,14 +294,41 @@ def test_build_json_vlm_verifier_uses_configured_model_and_image_loader(tmp_path
     assert isinstance(client.calls[0]["messages"][1]["content"], list)
 
 
-def test_json_vlm_actor_returns_fail_action_for_malformed_response():
-    client = FakeClient("not json")
+def test_json_vlm_actor_repairs_malformed_response_to_valid_action():
+    client = SequenceClient(
+        [
+            '{"type":"click","confidence":0.9 "evidence":"missing comma","x":60,"y":40}',
+            json.dumps(
+                {
+                    "type": "click",
+                    "confidence": 0.9,
+                    "evidence": "browser toolbar",
+                    "x": 60,
+                    "y": 40,
+                }
+            ),
+        ]
+    )
+
+    proposal = JsonVLMActor(client=client, model="raw-vlm").propose(bundle())
+
+    assert proposal.type == "click"
+    assert proposal.x == 60
+    assert proposal.y == 40
+    assert len(client.calls) == 2
+    assert "valid JSON" in str(client.calls[1]["messages"])
+
+
+def test_json_vlm_actor_returns_fail_action_when_malformed_repair_is_still_invalid():
+    client = SequenceClient(["not json", "also not json"])
 
     proposal = JsonVLMActor(client=client, model="raw-vlm").propose(bundle())
 
     assert proposal.type == "fail"
     assert proposal.confidence == 1.0
+    assert proposal.reason == "invalid_vlm_action"
     assert "json" in proposal.evidence.lower()
+    assert len(client.calls) == 2
 
 
 def test_json_vlm_actor_returns_fail_action_for_invalid_schema():
