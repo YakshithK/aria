@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Protocol
 
@@ -42,6 +43,7 @@ class PillowScreenshotCapture:
         handle.close()
         image.save(path, format="PNG")
         image_bytes = path.read_bytes()
+        path.unlink()
         return CapturedScreenshot(
             path=path,
             width=int(image.width),
@@ -49,6 +51,16 @@ class PillowScreenshotCapture:
             image_bytes=image_bytes,
             mime_type="image/png",
         )
+
+
+def screenshot_image_loader(screenshots: Iterable[CapturedScreenshot]) -> Callable[[str], bytes]:
+    """Return a Callable[[path], bytes] that reads from in-memory screenshot bytes.
+
+    Use this instead of Path.read_bytes() when PillowScreenshotCapture is the capture
+    source — the PNG file is deleted after capture; bytes live in CapturedScreenshot.
+    """
+    registry = {str(s.path): s.image_bytes for s in screenshots}
+    return lambda path: registry[path]
 
 
 def build_observation_bundle(
