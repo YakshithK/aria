@@ -1,0 +1,118 @@
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from aria.harness.models import ObservationBundle
+
+
+ACTOR_SYSTEM_PROMPT = """You control a desktop one action at a time.
+
+Return exactly one JSON object. Do not return prose.
+Prefer click_element when a provided candidate clearly matches the intended target.
+Use raw click only when no candidate matches.
+Never invent candidate IDs.
+Never assume hidden state that is not visible in the screenshot path or provided candidates.
+Do not complete multiple steps in one response.
+If the target is not visible, choose scroll, wait, or fail.
+Include visual evidence and confidence.
+Avoid destructive, financial, security, and credential actions unless the subtask explicitly asks for them.
+
+Allowed JSON action types:
+- {"type":"click_element","candidate_id":"candidate_1","confidence":0.8,"evidence":"..."}
+- {"type":"click","x":100,"y":200,"confidence":0.8,"evidence":"..."}
+- {"type":"type","text":"hello","confidence":0.8,"evidence":"..."}
+- {"type":"key_combo","keys":["CTRL","L"],"confidence":0.8,"evidence":"..."}
+- {"type":"scroll","x":500,"y":500,"direction":"down","amount":2,"confidence":0.8,"evidence":"..."}
+- {"type":"wait","seconds":1,"reason":"loading","confidence":0.8,"evidence":"..."}
+- {"type":"done","summary":"...","confidence":0.8,"evidence":"..."}
+- {"type":"fail","reason":"...","confidence":0.8,"evidence":"..."}
+"""
+
+
+VERIFIER_SYSTEM_PROMPT = """You verify one desktop automation subtask.
+
+Return exactly one JSON object. Do not return prose.
+Decide only whether the current subtask success condition is satisfied.
+Use complete only when visible evidence satisfies the success condition.
+Use incomplete when another action may still complete the subtask.
+Use failed when the screen moved away from the target, an error appeared, or the subtask cannot be completed from the current state.
+
+Allowed JSON:
+{"status":"complete|incomplete|failed","confidence":0.8,"evidence":"...","next_hint":null}
+"""
+
+
+def build_actor_messages(bundle: ObservationBundle) -> list[dict[str, Any]]:
+    return [
+        {"role": "system", "content": ACTOR_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "goal": bundle.goal,
+                    "subtask": bundle.subtask,
+                    "success_condition": bundle.success_condition,
+                    "screenshot_path": bundle.screenshot_path,
+                    "screen_size": bundle.screen_size,
+                    "focused_window": _model_or_none(bundle.focused_window),
+                    "windows": [_model_or_none(window) for window in bundle.windows],
+                    "candidates": [_candidate_context(candidate) for candidate in bundle.candidates],
+                    "recent_actions": [_model_or_none(action) for action in bundle.recent_actions],
+                    "turn": bundle.turn,
+                },
+                ensure_ascii=True,
+            ),
+        },
+    ]
+
+
+def build_verifier_messages(
+    *,
+    before: ObservationBundle,
+    after: ObservationBundle,
+    executed_action: dict[str, Any],
+) -> list[dict[str, Any]]:
+    return [
+        {"role": "system", "content": VERIFIER_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "goal": before.goal,
+                    "subtask": before.subtask,
+                    "success_condition": before.success_condition,
+                    "before": {
+                        "screenshot_path": before.screenshot_path,
+                        "candidates": [_candidate_context(candidate) for candidate in before.candidates],
+                    },
+                    "after": {
+                        "screenshot_path": after.screenshot_path,
+                        "candidates": [_candidate_context(candidate) for candidate in after.candidates],
+                    },
+                    "executed_action": executed_action,
+                },
+                ensure_ascii=True,
+            ),
+        },
+    ]
+
+
+def _candidate_context(candidate: Any) -> dict[str, Any]:
+    return {
+        "id": candidate.id,
+        "source": candidate.source,
+        "role": candidate.role,
+        "label": candidate.label,
+        "bounds": candidate.bounds,
+        "bounds_space": candidate.bounds_space,
+        "actions": candidate.actions,
+        "confidence": candidate.confidence,
+        "visible": candidate.visible,
+    }
+
+
+def _model_or_none(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    return value.model_dump()
