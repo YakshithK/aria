@@ -54,6 +54,7 @@ class Executor(Protocol):
 
 
 TraceWriter = Callable[[dict[str, Any]], None]
+ApprovalCallback = Callable[[TurnPreview], bool]
 
 
 def preview_turn(
@@ -77,6 +78,58 @@ def preview_turn(
         proposal=proposal,
         validation=validation,
     )
+
+
+def run_approved_turn(
+    *,
+    goal: str,
+    subtask: str,
+    success_condition: str,
+    observer: Observer,
+    actor: Actor,
+    executor: Executor,
+    approve: ApprovalCallback,
+) -> dict[str, Any]:
+    preview = preview_turn(
+        goal=goal,
+        subtask=subtask,
+        success_condition=success_condition,
+        observer=observer,
+        actor=actor,
+    )
+    preview_payload = preview.model_dump()
+    if not preview.validation.ok:
+        return {
+            "ok": False,
+            "status": "blocked",
+            "error": preview.validation.reason,
+            "preview": preview_payload,
+            "execution": None,
+        }
+    if not approve(preview):
+        return {
+            "ok": False,
+            "status": "denied",
+            "error": "action not approved",
+            "preview": preview_payload,
+            "execution": None,
+        }
+    execution = executor.execute(preview.proposal, preview.validation, preview.observation)
+    if execution.get("ok") is False:
+        return {
+            "ok": False,
+            "status": "execution_failed",
+            "error": str(execution.get("error") or "execution failed"),
+            "preview": preview_payload,
+            "execution": execution,
+        }
+    return {
+        "ok": True,
+        "status": "executed",
+        "error": None,
+        "preview": preview_payload,
+        "execution": execution,
+    }
 
 
 def run_subtask(

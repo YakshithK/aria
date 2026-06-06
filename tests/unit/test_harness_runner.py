@@ -1,5 +1,5 @@
 from aria.harness.models import ActionProposal, Candidate, ObservationBundle, VerificationResult
-from aria.harness.runner import preview_turn, run_subtask
+from aria.harness.runner import preview_turn, run_approved_turn, run_subtask
 
 
 def make_bundle(turn: int = 1) -> ObservationBundle:
@@ -100,6 +100,16 @@ class PreviewActor:
         return self.proposal
 
 
+class RecordingExecutor:
+    def __init__(self, result=None):
+        self.result = result or {"ok": True, "route": "wait", "raw_result": {"ok": True}}
+        self.calls = []
+
+    def execute(self, proposal, validation, observation):
+        self.calls.append((proposal, validation, observation))
+        return self.result
+
+
 def preview_observation():
     return ObservationBundle(
         goal="Search",
@@ -186,6 +196,129 @@ def test_preview_turn_returns_validation_failure_for_bad_action():
 
     assert result.validation.ok is False
     assert "outside screen bounds" in result.validation.reason
+
+
+def test_approved_turn_does_not_execute_when_validation_fails():
+    observation = preview_observation()
+    observer = PreviewObserver(observation)
+    actor = PreviewActor(
+        ActionProposal(
+            type="click",
+            x=9999,
+            y=9999,
+            confidence=0.8,
+            evidence="outside",
+        )
+    )
+    executor = RecordingExecutor()
+
+    result = run_approved_turn(
+        goal="Search",
+        subtask="Find input",
+        success_condition="input visible",
+        observer=observer,
+        actor=actor,
+        executor=executor,
+        approve=lambda preview: True,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert "outside screen bounds" in result["error"]
+    assert result["execution"] is None
+    assert executor.calls == []
+
+
+def test_approved_turn_does_not_execute_when_approval_denies():
+    observation = preview_observation()
+    observer = PreviewObserver(observation)
+    actor = PreviewActor(
+        ActionProposal(
+            type="wait",
+            seconds=1,
+            reason="loading",
+            confidence=0.8,
+            evidence="screen is visible",
+        )
+    )
+    executor = RecordingExecutor()
+
+    result = run_approved_turn(
+        goal="Search",
+        subtask="Find input",
+        success_condition="input visible",
+        observer=observer,
+        actor=actor,
+        executor=executor,
+        approve=lambda preview: False,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "denied"
+    assert result["error"] == "action not approved"
+    assert result["execution"] is None
+    assert executor.calls == []
+
+
+def test_approved_turn_executes_once_when_approved():
+    observation = preview_observation()
+    observer = PreviewObserver(observation)
+    actor = PreviewActor(
+        ActionProposal(
+            type="wait",
+            seconds=1,
+            reason="loading",
+            confidence=0.8,
+            evidence="screen is visible",
+        )
+    )
+    executor = RecordingExecutor({"ok": True, "route": "wait", "raw_result": {"ok": True}})
+
+    result = run_approved_turn(
+        goal="Search",
+        subtask="Find input",
+        success_condition="input visible",
+        observer=observer,
+        actor=actor,
+        executor=executor,
+        approve=lambda preview: True,
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "executed"
+    assert result["error"] is None
+    assert result["execution"]["ok"] is True
+    assert len(executor.calls) == 1
+
+
+def test_approved_turn_reports_executor_failure():
+    observation = preview_observation()
+    observer = PreviewObserver(observation)
+    actor = PreviewActor(
+        ActionProposal(
+            type="wait",
+            seconds=1,
+            reason="loading",
+            confidence=0.8,
+            evidence="screen is visible",
+        )
+    )
+    executor = RecordingExecutor({"ok": False, "error": "executor unavailable"})
+
+    result = run_approved_turn(
+        goal="Search",
+        subtask="Find input",
+        success_condition="input visible",
+        observer=observer,
+        actor=actor,
+        executor=executor,
+        approve=lambda preview: True,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "execution_failed"
+    assert result["error"] == "executor unavailable"
+    assert result["execution"]["ok"] is False
 
 
 def test_runner_completes_when_verifier_returns_complete():
