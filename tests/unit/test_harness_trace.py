@@ -26,10 +26,34 @@ def test_write_harness_trace_creates_jsonl_record(tmp_path, monkeypatch):
     }
 
 
-def test_write_harness_trace_silently_ignores_errors(monkeypatch):
-    def fail_open(*args, **kwargs):
-        raise OSError("disk full")
+def test_write_harness_trace_returns_path_and_writes_payload(tmp_path):
+    path = write_harness_trace(
+        {"goal": "Search", "status": "preview"},
+        trace_dir=tmp_path,
+        timestamp="2026-06-06T12:00:00Z",
+    )
 
-    monkeypatch.setattr("builtins.open", fail_open)
+    assert path == tmp_path / "20260606-120000_harness.jsonl"
+    text = path.read_text()
+    assert '"type": "harness"' in text
+    assert '"goal": "Search"' in text
+    assert '"timestamp": "2026-06-06T12:00:00Z"' in text
 
-    write_harness_trace({"task": "Search Notion"})
+
+def test_write_harness_trace_reports_write_failures(tmp_path, capsys):
+    not_a_dir = tmp_path / "not-a-dir"
+    not_a_dir.write_text("file")
+
+    try:
+        write_harness_trace(
+            {"goal": "Search"},
+            trace_dir=not_a_dir,
+            timestamp="2026-06-06T12:00:00Z",
+        )
+    except OSError:
+        pass
+    else:
+        raise AssertionError("expected OSError")
+
+    captured = capsys.readouterr()
+    assert "trace write failed" in captured.err
