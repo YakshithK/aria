@@ -35,6 +35,16 @@ class FakeClient:
         return Response(self.content)
 
 
+class SequenceClient:
+    def __init__(self, contents: list[str]):
+        self.contents = contents
+        self.calls = []
+
+    def create_completion(self, **kwargs):
+        self.calls.append(kwargs)
+        return Response(self.contents[len(self.calls) - 1])
+
+
 def bundle() -> ObservationBundle:
     return ObservationBundle(
         goal="Search Notion",
@@ -81,6 +91,73 @@ def test_json_vlm_actor_parses_action_proposal_and_uses_model():
     assert proposal.type == "click_element"
     assert proposal.candidate_id == "candidate_1"
     assert client.calls[0]["model"] == "raw-vlm"
+
+
+def test_json_vlm_actor_repairs_unknown_candidate_action_to_raw_action():
+    empty_bundle = bundle().model_copy(update={"candidates": []})
+    client = SequenceClient(
+        [
+            json.dumps(
+                {
+                    "type": "click_element",
+                    "candidate_id": "search_input",
+                    "confidence": 0.99,
+                    "evidence": "The search bar is visible.",
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "click",
+                    "x": 620,
+                    "y": 85,
+                    "confidence": 0.82,
+                    "evidence": "The search bar is visible near the top.",
+                }
+            ),
+        ]
+    )
+
+    proposal = JsonVLMActor(client=client, model="raw-vlm").propose(empty_bundle)
+
+    assert proposal.type == "click"
+    assert proposal.x == 620
+    assert proposal.y == 85
+    assert len(client.calls) == 2
+    repair_messages = client.calls[1]["messages"]
+    assert "unknown candidate_id: search_input" in str(repair_messages)
+    assert "Use a raw click" in str(repair_messages)
+
+
+def test_json_vlm_actor_returns_fail_when_repair_keeps_unknown_candidate_action():
+    empty_bundle = bundle().model_copy(update={"candidates": []})
+    client = SequenceClient(
+        [
+            json.dumps(
+                {
+                    "type": "click_element",
+                    "candidate_id": "search_input",
+                    "confidence": 0.99,
+                    "evidence": "The search bar is visible.",
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "click_element",
+                    "candidate_id": "search_input",
+                    "confidence": 0.99,
+                    "evidence": "The search bar is visible.",
+                }
+            ),
+        ]
+    )
+
+    proposal = JsonVLMActor(client=client, model="raw-vlm").propose(empty_bundle)
+
+    assert proposal.type == "fail"
+    assert proposal.confidence == 1.0
+    assert proposal.reason == "invalid_vlm_action"
+    assert "unknown candidate_id: search_input" in proposal.evidence
+    assert len(client.calls) == 2
 
 
 def test_json_vlm_actor_can_send_image_bytes():

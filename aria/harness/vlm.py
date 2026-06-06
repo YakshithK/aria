@@ -63,12 +63,31 @@ class JsonVLMActor:
                 if self.image_loader is not None
                 else None
             )
+            messages = build_actor_messages(observation, image_bytes=image_bytes)
             response = self.client.create_completion(
                 model=self.model,
-                messages=build_actor_messages(observation, image_bytes=image_bytes),
+                messages=messages,
                 temperature=0,
             )
-            return ActionProposal(**_json_from_response(response))
+            proposal = ActionProposal(**_json_from_response(response))
+            repair_reason = _candidate_action_error(proposal, observation)
+            if repair_reason is None:
+                return proposal
+            repair_response = self.client.create_completion(
+                model=self.model,
+                messages=_repair_messages(messages, proposal, repair_reason),
+                temperature=0,
+            )
+            repaired = ActionProposal(**_json_from_response(repair_response))
+            repaired_reason = _candidate_action_error(repaired, observation)
+            if repaired_reason is None:
+                return repaired
+            return ActionProposal(
+                type="fail",
+                confidence=1.0,
+                evidence=f"VLM actor returned invalid action after repair: {repaired_reason}",
+                reason="invalid_vlm_action",
+            )
         except (ValueError, ValidationError) as exc:
             return ActionProposal(
                 type="fail",
@@ -142,3 +161,33 @@ def _json_from_response(response: Any) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("VLM response must decode to a JSON object")
     return data
+
+
+def _candidate_action_error(proposal: ActionProposal, observation: ObservationBundle) -> str | None:
+    if proposal.type not in {"click_element", "type_into_element"}:
+        return None
+    if not proposal.candidate_id:
+        return f"{proposal.type} requires candidate_id"
+    candidate_ids = {candidate.id for candidate in observation.candidates}
+    if proposal.candidate_id not in candidate_ids:
+        return f"unknown candidate_id: {proposal.candidate_id}"
+    return None
+
+
+def _repair_messages(
+    messages: list[dict[str, Any]],
+    proposal: ActionProposal,
+    reason: str,
+) -> list[dict[str, Any]]:
+    return [
+        *messages,
+        {"role": "assistant", "content": proposal.model_dump_json(exclude_none=True)},
+        {
+            "role": "user",
+            "content": (
+                f"Your previous action is invalid: {reason}. Return exactly one corrected JSON action. "
+                "Use a raw click with screenshot coordinates when no listed candidate_id exists. "
+                "Do not invent candidate IDs."
+            ),
+        },
+    ]
