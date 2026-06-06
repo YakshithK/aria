@@ -43,6 +43,19 @@ def test_actor_prompt_contains_one_action_json_rules_and_candidates():
     assert "data:image/png" not in text
 
 
+def test_actor_prompt_forbids_element_actions_when_candidates_are_empty():
+    empty_bundle = bundle().model_copy(update={"candidates": []})
+
+    messages = build_actor_messages(empty_bundle)
+    text = str(messages)
+
+    assert "candidate_count" in text
+    assert '"candidate_count": 0' in text
+    assert '"candidate_ids": []' in text
+    assert "If candidates is empty" in text
+    assert "click_element and type_into_element are forbidden" in text
+
+
 def test_verifier_prompt_contains_before_after_and_success_condition():
     messages = build_verifier_messages(
         before=bundle(),

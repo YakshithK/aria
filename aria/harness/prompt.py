@@ -14,6 +14,8 @@ Prefer click_element when a provided candidate clearly matches the intended targ
 Use type_into_element when a provided editable candidate clearly matches the intended target.
 Use raw click only when no candidate matches.
 Never invent candidate IDs.
+If candidates is empty, click_element and type_into_element are forbidden. Use click with screenshot
+coordinates, scroll, wait, or fail.
 Never assume hidden state that is not represented by the current candidate list or task context.
 Do not complete multiple steps in one response.
 If the target is not visible, choose scroll, wait, or fail.
@@ -116,6 +118,8 @@ def _bundle_json(bundle: ObservationBundle) -> str:
             "screen_size": bundle.screen_size,
             "focused_window": _model_or_none(bundle.focused_window),
             "windows": [_model_or_none(window) for window in bundle.windows],
+            "candidate_count": len(bundle.candidates),
+            "candidate_ids": [candidate.id for candidate in bundle.candidates],
             "candidates": [_candidate_context(candidate) for candidate in bundle.candidates],
             "recent_actions": [_model_or_none(action) for action in bundle.recent_actions],
             "turn": bundle.turn,
