@@ -1,7 +1,13 @@
 import json
 
+from aria.harness.config import ModelConfig
 from aria.harness.models import Candidate, ObservationBundle
-from aria.harness.vlm import JsonVLMActor, JsonVLMVerifier
+from aria.harness.vlm import (
+    JsonVLMActor,
+    JsonVLMVerifier,
+    build_json_vlm_actor,
+    build_json_vlm_verifier,
+)
 
 
 class Message:
@@ -100,6 +106,31 @@ def test_json_vlm_actor_can_send_image_bytes():
     assert content[1]["image_url"]["url"] == "data:image/png;base64,ZmFrZSBwbmc="
 
 
+def test_build_json_vlm_actor_uses_configured_model_and_image_loader(tmp_path):
+    image = tmp_path / "screen.png"
+    image.write_bytes(b"png")
+    client = FakeClient(
+        json.dumps(
+            {
+                "type": "wait",
+                "seconds": 1,
+                "reason": "loading",
+                "confidence": 0.8,
+                "evidence": "screen visible",
+            }
+        )
+    )
+    actor = build_json_vlm_actor(
+        client=client,
+        config=ModelConfig(provider="openai", model="actor-model"),
+    )
+
+    actor.propose(bundle().model_copy(update={"screenshot_path": str(image)}))
+
+    assert client.calls[0]["model"] == "actor-model"
+    assert isinstance(client.calls[0]["messages"][1]["content"], list)
+
+
 def test_json_vlm_verifier_parses_verification_result():
     client = FakeClient(
         json.dumps(
@@ -153,6 +184,37 @@ def test_json_vlm_verifier_can_send_before_and_after_images():
         "data:image/png;base64,YmVmb3Jl",
         "data:image/png;base64,YWZ0ZXI=",
     ]
+
+
+def test_build_json_vlm_verifier_uses_configured_model_and_image_loader(tmp_path):
+    before_image = tmp_path / "before.png"
+    after_image = tmp_path / "after.png"
+    before_image.write_bytes(b"before")
+    after_image.write_bytes(b"after")
+    client = FakeClient(
+        json.dumps(
+            {
+                "status": "incomplete",
+                "confidence": 0.8,
+                "evidence": "not done",
+                "next_hint": None,
+            }
+        )
+    )
+    verifier = build_json_vlm_verifier(
+        client=client,
+        config=ModelConfig(provider="openai", model="verifier-model"),
+    )
+
+    verifier.verify(
+        before=bundle().model_copy(update={"screenshot_path": str(before_image)}),
+        after=bundle().model_copy(update={"screenshot_path": str(after_image)}),
+        action={"type": "wait", "seconds": 1},
+        execution={"ok": True},
+    )
+
+    assert client.calls[0]["model"] == "verifier-model"
+    assert isinstance(client.calls[0]["messages"][1]["content"], list)
 
 
 def test_json_vlm_actor_returns_fail_action_for_malformed_response():

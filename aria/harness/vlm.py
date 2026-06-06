@@ -6,6 +6,8 @@ from typing import Any, Protocol
 
 from pydantic import ValidationError
 
+from aria.harness.config import ModelConfig
+from aria.harness.images import load_image_bytes
 from aria.harness.models import ActionProposal, ObservationBundle, VerificationResult
 from aria.harness.prompt import build_actor_messages, build_verifier_messages
 
@@ -13,6 +15,22 @@ from aria.harness.prompt import build_actor_messages, build_verifier_messages
 class CompletionClient(Protocol):
     def create_completion(self, **kwargs: Any) -> Any:
         ...
+
+
+def build_json_vlm_actor(*, client: CompletionClient, config: ModelConfig) -> "JsonVLMActor":
+    return JsonVLMActor(
+        client=client,
+        model=config.model,
+        image_loader=load_image_bytes,
+    )
+
+
+def build_json_vlm_verifier(*, client: CompletionClient, config: ModelConfig) -> "JsonVLMVerifier":
+    return JsonVLMVerifier(
+        client=client,
+        model=config.model,
+        image_loader=load_image_bytes,
+    )
 
 
 class JsonVLMActor:
