@@ -212,6 +212,7 @@ class HarnessExecutor:
                 "ok": bool(type_result.get("ok", True)),
                 "click": click_result,
                 "type": type_result,
+                "focused_editable": bool(type_result.get("ok", True)),
             },
             candidate_id=candidate.id,
             backend_id=candidate.backend_id,
@@ -233,7 +234,7 @@ def _result(
     backend_id: str | None = None,
     fallback_reason: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    result = {
         "ok": bool(raw.get("ok", True)),
         "route": route,
         "action": proposal.model_dump(exclude_none=True),
@@ -242,3 +243,6 @@ def _result(
         "fallback_reason": fallback_reason,
         "raw_result": raw,
     }
+    if "focused_editable" in raw:
+        result["focused_editable"] = bool(raw["focused_editable"])
+    return result

@@ -222,4 +222,5 @@ def test_executor_falls_back_for_type_into_element_without_backend():
 
     assert result["ok"] is True
     assert result["route"] == "candidate_center"
+    assert result["focused_editable"] is True
     assert pixel.calls == [("click", 80, 64), ("type_text", "hello")]

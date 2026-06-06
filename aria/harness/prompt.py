@@ -13,7 +13,7 @@ Prefer click_element when a provided candidate clearly matches the intended targ
 Use type_into_element when a provided editable candidate clearly matches the intended target.
 Use raw click only when no candidate matches.
 Never invent candidate IDs.
-Never assume hidden state that is not visible in the screenshot path or provided candidates.
+Never assume hidden state that is not represented by the current candidate list or task context.
 Do not complete multiple steps in one response.
 If the target is not visible, choose scroll, wait, or fail.
 Include visual evidence and confidence.

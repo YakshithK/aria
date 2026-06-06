@@ -95,16 +95,6 @@ class ValidationResult(BaseModel):
     candidate: Candidate | None = None
 
 
-class ExecutionResult(BaseModel):
-    ok: bool
-    route: str
-    action: dict[str, Any]
-    candidate_id: str | None = None
-    backend_id: str | None = None
-    fallback_reason: str | None = None
-    raw_result: dict[str, Any] | None = None
-
-
 class VerificationResult(BaseModel):
     status: VerificationStatus
     confidence: float

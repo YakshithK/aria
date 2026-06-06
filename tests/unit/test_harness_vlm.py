@@ -98,3 +98,38 @@ def test_json_vlm_verifier_parses_verification_result():
 
     assert result.status == "complete"
     assert result.evidence == "The search input is visible."
+
+
+def test_json_vlm_actor_returns_fail_action_for_malformed_response():
+    client = FakeClient("not json")
+
+    proposal = JsonVLMActor(client=client, model="raw-vlm").propose(bundle())
+
+    assert proposal.type == "fail"
+    assert proposal.confidence == 1.0
+    assert "json" in proposal.evidence.lower()
+
+
+def test_json_vlm_actor_returns_fail_action_for_invalid_schema():
+    client = FakeClient(json.dumps({"type": "click_element", "confidence": 0.8}))
+
+    proposal = JsonVLMActor(client=client, model="raw-vlm").propose(bundle())
+
+    assert proposal.type == "fail"
+    assert proposal.confidence == 1.0
+    assert "evidence" in proposal.evidence.lower()
+
+
+def test_json_vlm_verifier_returns_failed_result_for_malformed_response():
+    client = FakeClient("not json")
+
+    result = JsonVLMVerifier(client=client, model="raw-vlm").verify(
+        before=bundle(),
+        after=bundle(),
+        action={"type": "click_element", "candidate_id": "candidate_1"},
+        execution={"ok": True},
+    )
+
+    assert result.status == "failed"
+    assert result.confidence == 1.0
+    assert "json" in result.evidence.lower()
