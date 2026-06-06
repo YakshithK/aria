@@ -1,34 +1,60 @@
 import pytest
 
 from aria.harness.config import ModelConfig
-from aria.harness.provider import OpenAICompletionClient, ProviderError, build_completion_client
+from aria.harness.provider import OpenAICompatibleCompletionClient, ProviderError, build_completion_client
 
 
-def test_build_completion_client_rejects_missing_api_key(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+def test_build_completion_client_rejects_missing_groq_api_key(monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
 
-    with pytest.raises(ProviderError, match="missing API key env var: OPENAI_API_KEY"):
-        build_completion_client(ModelConfig(provider="openai", model="gpt-4.1-mini"))
+    with pytest.raises(ProviderError, match="missing API key env var: GROQ_API_KEY"):
+        build_completion_client(
+            ModelConfig(
+                provider="groq",
+                model="meta-llama/llama-4-scout-17b-16e-instruct",
+                api_key_env="GROQ_API_KEY",
+            )
+        )
 
 
 def test_build_completion_client_rejects_unknown_provider(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
 
     with pytest.raises(ProviderError, match="unsupported provider: unknown"):
         build_completion_client(ModelConfig(provider="unknown", model="x"))
 
 
-def test_build_completion_client_creates_openai_client(monkeypatch):
+def test_build_completion_client_creates_groq_openai_compatible_client(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+
+    client = build_completion_client(
+        ModelConfig(
+            provider="groq",
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            api_key_env="GROQ_API_KEY",
+        )
+    )
+
+    assert isinstance(client, OpenAICompatibleCompletionClient)
+    assert client.api_key == "test-key"
+    assert client.base_url == "https://api.groq.com/openai/v1"
+
+
+def test_build_completion_client_still_supports_openai(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
-    client = build_completion_client(ModelConfig(provider="openai", model="gpt-4.1-mini"))
+    client = build_completion_client(
+        ModelConfig(provider="openai", model="gpt-4.1-mini", api_key_env="OPENAI_API_KEY")
+    )
 
-    assert isinstance(client, OpenAICompletionClient)
+    assert isinstance(client, OpenAICompatibleCompletionClient)
     assert client.api_key == "test-key"
+    assert client.base_url is None
 
 
-def test_openai_completion_client_forwards_completion_arguments(monkeypatch):
+def test_openai_compatible_completion_client_forwards_completion_arguments(monkeypatch):
     calls = []
+    clients = []
 
     class FakeCompletions:
         def create(self, **kwargs):
@@ -39,23 +65,28 @@ def test_openai_completion_client_forwards_completion_arguments(monkeypatch):
         completions = FakeCompletions()
 
     class FakeOpenAI:
-        def __init__(self, api_key):
-            self.api_key = api_key
+        def __init__(self, **kwargs):
+            clients.append(kwargs)
+            self.api_key = kwargs["api_key"]
             self.chat = FakeChat()
 
     monkeypatch.setattr("aria.harness.provider.OpenAI", FakeOpenAI)
 
-    client = OpenAICompletionClient(api_key="test-key")
+    client = OpenAICompatibleCompletionClient(
+        api_key="test-key",
+        base_url="https://api.groq.com/openai/v1",
+    )
     response = client.create_completion(
-        model="gpt-4.1-mini",
+        model="meta-llama/llama-4-scout-17b-16e-instruct",
         messages=[{"role": "user", "content": "hello"}],
         temperature=0,
     )
 
     assert response == {"ok": True}
+    assert clients == [{"api_key": "test-key", "base_url": "https://api.groq.com/openai/v1"}]
     assert calls == [
         {
-            "model": "gpt-4.1-mini",
+            "model": "meta-llama/llama-4-scout-17b-16e-instruct",
             "messages": [{"role": "user", "content": "hello"}],
             "temperature": 0,
         }

@@ -7,14 +7,17 @@ from openai import OpenAI
 
 from aria.harness.config import ModelConfig
 
+GROQ_OPENAI_BASE_URL = "https://api.groq.com/openai/v1"
+
 
 class ProviderError(RuntimeError):
     pass
 
 
-class OpenAICompletionClient:
-    def __init__(self, *, api_key: str) -> None:
+class OpenAICompatibleCompletionClient:
+    def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
         self.api_key = api_key
+        self.base_url = base_url
 
     def create_completion(
         self,
@@ -23,7 +26,10 @@ class OpenAICompletionClient:
         messages: list[dict[str, Any]],
         temperature: float,
     ) -> Any:
-        client = OpenAI(api_key=self.api_key)
+        kwargs: dict[str, Any] = {"api_key": self.api_key}
+        if self.base_url is not None:
+            kwargs["base_url"] = self.base_url
+        client = OpenAI(**kwargs)
         return client.chat.completions.create(
             model=model,
             messages=messages,
@@ -31,10 +37,11 @@ class OpenAICompletionClient:
         )
 
 
-def build_completion_client(config: ModelConfig) -> OpenAICompletionClient:
-    if config.provider != "openai":
+def build_completion_client(config: ModelConfig) -> OpenAICompatibleCompletionClient:
+    if config.provider not in {"openai", "groq"}:
         raise ProviderError(f"unsupported provider: {config.provider}")
     api_key = os.getenv(config.api_key_env)
     if not api_key:
         raise ProviderError(f"missing API key env var: {config.api_key_env}")
-    return OpenAICompletionClient(api_key=api_key)
+    base_url = GROQ_OPENAI_BASE_URL if config.provider == "groq" else None
+    return OpenAICompatibleCompletionClient(api_key=api_key, base_url=base_url)

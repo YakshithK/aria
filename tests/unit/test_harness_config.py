@@ -12,13 +12,14 @@ from aria.harness.config import (
 )
 
 
-def test_default_config_requires_approval_and_uses_openai_models():
+def test_default_config_requires_approval_and_uses_groq_vision_model():
     config = HarnessConfig()
 
-    assert config.actor.provider == "openai"
-    assert config.actor.model == "gpt-4.1-mini"
-    assert config.verifier.provider == "openai"
-    assert config.planner.provider == "openai"
+    assert config.actor.provider == "groq"
+    assert config.actor.model == "meta-llama/llama-4-scout-17b-16e-instruct"
+    assert config.actor.api_key_env == "GROQ_API_KEY"
+    assert config.verifier.provider == "groq"
+    assert config.planner.provider == "groq"
     assert config.safety.approval_mode == "always"
     assert config.safety.allow_destructive_actions is False
     assert config.safety.max_turns_per_subtask == 3

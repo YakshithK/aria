@@ -9,12 +9,13 @@ from pydantic import BaseModel, Field
 
 ApprovalMode = Literal["always", "never", "on_risk"]
 DEFAULT_CONFIG_PATH = Path(".aria/config.json")
+DEFAULT_GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
 
 class ModelConfig(BaseModel):
-    provider: str = "openai"
-    model: str = "gpt-4.1-mini"
-    api_key_env: str = "OPENAI_API_KEY"
+    provider: str = "groq"
+    model: str = DEFAULT_GROQ_VISION_MODEL
+    api_key_env: str = "GROQ_API_KEY"
 
 
 class SafetyConfig(BaseModel):
