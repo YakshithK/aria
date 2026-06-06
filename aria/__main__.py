@@ -3,6 +3,7 @@ import json
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -33,6 +34,7 @@ from aria.harness.runner import preview_turn, run_approved_turn
 from aria.harness.semantic import LocalSemanticExecutor, SemanticHarnessObserver, SemanticObserverAdapter
 from aria.harness.trace import write_harness_trace
 from aria.harness.trace_summary import summarize_approved_turn
+from aria.harness.visual_debug import VisualDebugger
 from aria.harness.vlm import build_json_vlm_actor
 from aria.launcher import (
     launch_app,
@@ -330,13 +332,21 @@ def _build_harness_preview_payload(
     config = load_harness_config(config_path)
     client = build_completion_client(config.actor)
     observer = _build_preview_observer(apps)
-    actor = build_json_vlm_actor(client=client, config=config.actor, image_loader=observer.image_loader)
+    visual_debugger = VisualDebugger(output_dir=_harness_artifact_dir(config))
+    actor = build_json_vlm_actor(
+        client=client,
+        config=config.actor,
+        image_loader=observer.image_loader,
+        actor_image_loader=observer.actor_image_loader(visual_debugger),
+    )
     preview = preview_turn(
         goal=goal,
         subtask=subtask,
         success_condition=success_condition,
         observer=observer,
         actor=actor,
+        visual_debugger=visual_debugger,
+        screenshot_bytes_loader=observer.image_loader,
     )
     observation = preview.observation
     return {
@@ -349,6 +359,8 @@ def _build_harness_preview_payload(
         "actor_provider": config.actor.provider,
         "actor_model": config.actor.model,
         "screenshot_path": observation.screenshot_path,
+        "actor_image_path": preview.actor_image_path,
+        "proposal_debug_image_path": preview.proposal_debug_image_path,
         "screen_size": list(observation.screen_size),
         "candidate_count": len(observation.candidates),
         "proposal": preview.proposal.model_dump(exclude_none=True),
@@ -370,7 +382,13 @@ def _build_harness_approve_payload(
     config = load_harness_config(config_path)
     client = build_completion_client(config.actor)
     observer = _build_preview_observer(apps)
-    actor = build_json_vlm_actor(client=client, config=config.actor, image_loader=observer.image_loader)
+    visual_debugger = VisualDebugger(output_dir=_harness_artifact_dir(config))
+    actor = build_json_vlm_actor(
+        client=client,
+        config=config.actor,
+        image_loader=observer.image_loader,
+        actor_image_loader=observer.actor_image_loader(visual_debugger),
+    )
     executor = _build_approved_turn_executor(apps)
     result = run_approved_turn(
         goal=goal,
@@ -380,6 +398,8 @@ def _build_harness_approve_payload(
         actor=actor,
         executor=executor,
         approve=approve,
+        visual_debugger=visual_debugger,
+        screenshot_bytes_loader=observer.image_loader,
     )
     record = _approved_turn_trace_record(
         mode="approve",
@@ -449,7 +469,16 @@ def _approved_turn_trace_record(
         "approved": result.get("status") in {"executed", "execution_failed"},
         "execution": result.get("execution"),
         "status": result.get("status"),
+        "actor_image_path": preview.get("actor_image_path"),
+        "proposal_debug_image_path": preview.get("proposal_debug_image_path"),
     }
+
+
+def _harness_artifact_dir(config: HarnessConfig) -> Path:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    path = config.trace.output_dir / f"{timestamp}_artifacts"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def _build_preview_observer(apps: list[str]):
@@ -485,6 +514,25 @@ class _ScreenshotOnlyObserver:
 
     def image_loader(self, path: str) -> bytes:
         return self._bytes[path]
+
+    @property
+    def screenshot_bytes(self) -> bytes | None:
+        if not self._bytes:
+            return None
+        return next(reversed(self._bytes.values()))
+
+    def actor_image_loader(self, visual_debugger: VisualDebugger):
+        def load_actor_image(observation):
+            screenshot_bytes = self.image_loader(observation.screenshot_path)
+            artifacts = visual_debugger.prepare_actor_image(
+                screenshot_path=observation.screenshot_path,
+                screenshot_bytes=screenshot_bytes,
+            )
+            if artifacts.actor_image_path is None:
+                return None
+            return Path(artifacts.actor_image_path).read_bytes()
+
+        return load_actor_image
 
 
 def _print_json(data: object) -> None:

@@ -56,6 +56,21 @@ class SemanticHarnessObserver:
     def image_loader(self, path: str) -> bytes:
         return self._bytes[path]
 
+    def actor_image_loader(self, visual_debugger: Any):
+        def load_actor_image(observation: ObservationBundle):
+            screenshot_bytes = self.image_loader(observation.screenshot_path)
+            artifacts = visual_debugger.prepare_actor_image(
+                screenshot_path=observation.screenshot_path,
+                screenshot_bytes=screenshot_bytes,
+            )
+            if artifacts.actor_image_path is None:
+                return None
+            from pathlib import Path
+
+            return Path(artifacts.actor_image_path).read_bytes()
+
+        return load_actor_image
+
 
 class LocalSemanticExecutor:
     def __init__(self, conductor: Any) -> None:

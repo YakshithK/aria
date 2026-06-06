@@ -56,6 +56,14 @@ def test_actor_prompt_forbids_element_actions_when_candidates_are_empty():
     assert "click_element and type_into_element are forbidden" in text
 
 
+def test_actor_prompt_mentions_coordinate_grid():
+    messages = build_actor_messages(bundle())
+    text = str(messages)
+
+    assert "coordinate grid" in text.lower()
+    assert "center of the visible target" in text.lower()
+
+
 def test_verifier_prompt_contains_before_after_and_success_condition():
     messages = build_verifier_messages(
         before=bundle(),

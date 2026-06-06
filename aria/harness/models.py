@@ -99,6 +99,8 @@ class TurnPreview(BaseModel):
     observation: ObservationBundle
     proposal: ActionProposal
     validation: ValidationResult
+    actor_image_path: str | None = None
+    proposal_debug_image_path: str | None = None
 
 
 class VerificationResult(BaseModel):

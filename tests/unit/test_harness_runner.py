@@ -119,6 +119,22 @@ class RaisingExecutor:
         raise RuntimeError("backend crashed")
 
 
+class FakeVisualDebugger:
+    def __init__(self):
+        self.actor_calls = []
+        self.marker_calls = []
+
+    def prepare_actor_image(self, *, screenshot_path, screenshot_bytes):
+        self.actor_calls.append((screenshot_path, screenshot_bytes))
+        from aria.harness.visual_debug import VisualArtifacts
+
+        return VisualArtifacts(actor_image_path="/tmp/actor-grid.png")
+
+    def save_click_marker(self, *, screenshot_path, screenshot_bytes, x, y):
+        self.marker_calls.append((screenshot_path, screenshot_bytes, x, y))
+        return "/tmp/proposal-click.png"
+
+
 def preview_observation():
     return ObservationBundle(
         goal="Search",
@@ -205,6 +221,47 @@ def test_preview_turn_returns_validation_failure_for_bad_action():
 
     assert result.validation.ok is False
     assert "outside screen bounds" in result.validation.reason
+
+
+def test_preview_turn_attaches_visual_artifacts_for_raw_click():
+    observation = preview_observation()
+    actor = PreviewActor(ActionProposal(type="click", x=100, y=50, confidence=0.8, evidence="target"))
+    visual_debugger = FakeVisualDebugger()
+
+    result = preview_turn(
+        goal="Search",
+        subtask="Find input",
+        success_condition="input visible",
+        observer=PreviewObserver(observation),
+        actor=actor,
+        visual_debugger=visual_debugger,
+        screenshot_bytes=b"png",
+    )
+
+    assert result.actor_image_path == "/tmp/actor-grid.png"
+    assert result.proposal_debug_image_path == "/tmp/proposal-click.png"
+    assert visual_debugger.actor_calls == [("/tmp/screen.png", b"png")]
+    assert visual_debugger.marker_calls == [("/tmp/screen.png", b"png", 100, 50)]
+
+
+def test_preview_turn_does_not_save_click_marker_for_wait_action():
+    observation = preview_observation()
+    actor = PreviewActor(ActionProposal(type="wait", seconds=1, reason="loading", confidence=0.8, evidence="loading"))
+    visual_debugger = FakeVisualDebugger()
+
+    result = preview_turn(
+        goal="Search",
+        subtask="Find input",
+        success_condition="input visible",
+        observer=PreviewObserver(observation),
+        actor=actor,
+        visual_debugger=visual_debugger,
+        screenshot_bytes=b"png",
+    )
+
+    assert result.actor_image_path == "/tmp/actor-grid.png"
+    assert result.proposal_debug_image_path is None
+    assert visual_debugger.marker_calls == []
 
 
 def test_approved_turn_does_not_execute_when_validation_fails():

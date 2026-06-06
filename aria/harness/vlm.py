@@ -22,11 +22,13 @@ def build_json_vlm_actor(
     client: CompletionClient,
     config: ModelConfig,
     image_loader: Callable[[str], bytes] | None = None,
+    actor_image_loader: Callable[[ObservationBundle], bytes | None] | None = None,
 ) -> "JsonVLMActor":
     return JsonVLMActor(
         client=client,
         model=config.model,
         image_loader=image_loader if image_loader is not None else load_image_bytes,
+        actor_image_loader=actor_image_loader,
     )
 
 
@@ -51,19 +53,20 @@ class JsonVLMActor:
         client: CompletionClient,
         model: str,
         image_loader: Callable[[str], bytes] | None = None,
+        actor_image_loader: Callable[[ObservationBundle], bytes | None] | None = None,
     ) -> None:
         self.client = client
         self.model = model
         self.image_loader = image_loader
+        self.actor_image_loader = actor_image_loader
 
     def propose(self, observation: ObservationBundle) -> ActionProposal:
         image_bytes = None
         try:
-            image_bytes = (
-                self.image_loader(observation.screenshot_path)
-                if self.image_loader is not None
-                else None
-            )
+            if self.actor_image_loader is not None:
+                image_bytes = self.actor_image_loader(observation)
+            if image_bytes is None and self.image_loader is not None:
+                image_bytes = self.image_loader(observation.screenshot_path)
             messages = build_actor_messages(observation, image_bytes=image_bytes)
             response = self.client.create_completion(
                 model=self.model,

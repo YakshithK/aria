@@ -183,6 +183,32 @@ def test_json_vlm_actor_can_send_image_bytes():
     assert content[1]["image_url"]["url"] == "data:image/png;base64,ZmFrZSBwbmc="
 
 
+def test_json_vlm_actor_prefers_actor_image_loader_when_provided():
+    client = FakeClient(
+        json.dumps(
+            {
+                "type": "click",
+                "x": 100,
+                "y": 50,
+                "confidence": 0.8,
+                "evidence": "grid target",
+            }
+        )
+    )
+    actor = JsonVLMActor(
+        client=client,
+        model="raw-vlm",
+        image_loader=lambda path: b"plain",
+        actor_image_loader=lambda observation: b"grid",
+    )
+
+    actor.propose(bundle())
+
+    content = client.calls[0]["messages"][1]["content"]
+    assert isinstance(content, list)
+    assert content[1]["image_url"]["url"] == "data:image/png;base64,Z3JpZA=="
+
+
 def test_build_json_vlm_actor_uses_configured_model_and_image_loader(tmp_path):
     image = tmp_path / "screen.png"
     image.write_bytes(b"png")

@@ -43,3 +43,23 @@ def test_summarize_approved_turn_includes_validation_failure():
     assert "proposal: click" in summary
     assert "validation: click coordinates are outside screen bounds" in summary
     assert "execution: none" in summary
+
+
+def test_approved_turn_summary_includes_visual_artifacts():
+    summary = summarize_approved_turn(
+        {
+            "status": "executed",
+            "goal": "open search",
+            "subtask": "find input",
+            "before_screenshot_path": "/tmp/screen.png",
+            "actor_image_path": ".aria/runs/run/actor-grid.png",
+            "proposal_debug_image_path": ".aria/runs/run/proposal-click.png",
+            "proposal": {"type": "click", "x": 100, "y": 50},
+            "validation": {"reason": "pixel click accepted"},
+            "approved": True,
+            "execution": {"ok": True, "route": "pixel"},
+        }
+    )
+
+    assert "actor image: .aria/runs/run/actor-grid.png" in summary
+    assert "proposal image: .aria/runs/run/proposal-click.png" in summary

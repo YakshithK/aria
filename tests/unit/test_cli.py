@@ -539,6 +539,48 @@ def test_harness_once_preview_prints_proposal_and_validation(monkeypatch):
     assert '"will_execute": false' in result.stdout
 
 
+def test_harness_once_preview_prints_visual_artifact_paths(monkeypatch):
+    monkeypatch.setattr(
+        "aria.__main__._build_harness_preview_payload",
+        lambda goal, subtask, success_condition, apps, config_path: {
+            "status": "preview",
+            "goal": goal,
+            "subtask": subtask,
+            "success_condition": success_condition,
+            "apps": apps,
+            "config_path": str(config_path),
+            "screenshot_path": "/tmp/screen.png",
+            "actor_image_path": ".aria/runs/run/actor-grid.png",
+            "proposal_debug_image_path": ".aria/runs/run/proposal-click.png",
+            "screen_size": [1280, 720],
+            "candidate_count": 0,
+            "actor_provider": "groq",
+            "actor_model": "model",
+            "proposal": {"type": "click", "x": 100, "y": 50, "confidence": 0.8, "evidence": "target"},
+            "validation": {"ok": True, "reason": "pixel click accepted", "execution_route": "pixel", "candidate": None},
+            "will_execute": False,
+        },
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "harness-once",
+            "--goal",
+            "Search",
+            "--subtask",
+            "Find input",
+            "--success",
+            "input visible",
+            "--preview",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "actor_image_path" in result.stdout
+    assert "proposal_debug_image_path" in result.stdout
+
+
 def test_harness_once_preview_reports_missing_config(monkeypatch):
     def fail_preview(goal, subtask, success_condition, apps, config_path):
         raise FileNotFoundError("config not found: .aria/config.json. Run `aria setup` or pass --config.")
@@ -701,6 +743,8 @@ def test_approved_turn_trace_record_extracts_preview_fields():
         result={
             "status": "executed",
             "preview": {
+                "actor_image_path": ".aria/runs/run/actor-grid.png",
+                "proposal_debug_image_path": ".aria/runs/run/proposal-click.png",
                 "observation": {
                     "screenshot_path": "/tmp/screen.png",
                     "candidates": [{"id": "candidate_1"}],
@@ -716,3 +760,5 @@ def test_approved_turn_trace_record_extracts_preview_fields():
     assert record["candidate_count"] == 1
     assert record["proposal"] == {"type": "wait"}
     assert record["approved"] is True
+    assert record["actor_image_path"] == ".aria/runs/run/actor-grid.png"
+    assert record["proposal_debug_image_path"] == ".aria/runs/run/proposal-click.png"

@@ -16,6 +16,9 @@ Use raw click only when no candidate matches.
 Never invent candidate IDs.
 If candidates is empty, click_element and type_into_element are forbidden. Use click with screenshot
 coordinates, scroll, wait, or fail.
+The screenshot may include a coordinate grid. Use the grid labels to estimate x/y.
+For raw click actions, choose the center of the visible target, not the label edge or surrounding chrome.
+Avoid browser toolbar/chrome unless the subtask explicitly asks for browser controls.
 Never assume hidden state that is not represented by the current candidate list or task context.
 Do not complete multiple steps in one response.
 If the target is not visible, choose scroll, wait, or fail.

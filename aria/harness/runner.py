@@ -64,6 +64,9 @@ def preview_turn(
     success_condition: str,
     observer: Observer,
     actor: Actor,
+    visual_debugger: Any | None = None,
+    screenshot_bytes: bytes | None = None,
+    screenshot_bytes_loader: Callable[[str], bytes] | None = None,
 ) -> TurnPreview:
     observation = observer.observe(
         goal=goal,
@@ -73,10 +76,29 @@ def preview_turn(
     )
     proposal = actor.propose(observation)
     validation = validate_action(proposal, observation)
+    actor_image_path = None
+    proposal_debug_image_path = None
+    if screenshot_bytes is None and screenshot_bytes_loader is not None:
+        screenshot_bytes = screenshot_bytes_loader(observation.screenshot_path)
+    if visual_debugger is not None and screenshot_bytes is not None:
+        artifacts = visual_debugger.prepare_actor_image(
+            screenshot_path=observation.screenshot_path,
+            screenshot_bytes=screenshot_bytes,
+        )
+        actor_image_path = artifacts.actor_image_path
+        if proposal.type == "click" and proposal.x is not None and proposal.y is not None:
+            proposal_debug_image_path = visual_debugger.save_click_marker(
+                screenshot_path=observation.screenshot_path,
+                screenshot_bytes=screenshot_bytes,
+                x=int(proposal.x),
+                y=int(proposal.y),
+            )
     return TurnPreview(
         observation=observation,
         proposal=proposal,
         validation=validation,
+        actor_image_path=actor_image_path,
+        proposal_debug_image_path=proposal_debug_image_path,
     )
 
 
@@ -89,6 +111,9 @@ def run_approved_turn(
     actor: Actor,
     executor: Executor,
     approve: ApprovalCallback,
+    visual_debugger: Any | None = None,
+    screenshot_bytes: bytes | None = None,
+    screenshot_bytes_loader: Callable[[str], bytes] | None = None,
 ) -> dict[str, Any]:
     preview = preview_turn(
         goal=goal,
@@ -96,6 +121,9 @@ def run_approved_turn(
         success_condition=success_condition,
         observer=observer,
         actor=actor,
+        visual_debugger=visual_debugger,
+        screenshot_bytes=screenshot_bytes,
+        screenshot_bytes_loader=screenshot_bytes_loader,
     )
     preview_payload = preview.model_dump()
     if not preview.validation.ok:
