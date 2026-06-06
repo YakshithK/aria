@@ -7,25 +7,19 @@ def summarize_approved_turn(record: dict[str, Any]) -> str:
     proposal = record.get("proposal") or {}
     validation = record.get("validation") or {}
     execution = record.get("execution")
-    approved = record.get("approved", False)
-
-    if execution is None:
-        execution_line = "none"
-    elif execution.get("ok") is False:
-        error = execution.get("error", "failed")
-        execution_line = f"failed: {error}"
-    else:
-        route = execution.get("route", "unknown")
-        execution_line = f"ok via {route}"
-
     lines = [
-        f"status: {record.get('status', 'unknown')}",
-        f"goal: {record.get('goal', '')}",
-        f"subtask: {record.get('subtask', '')}",
-        f"screenshot: {record.get('before_screenshot_path', '')}",
-        f"proposal: {proposal.get('type', 'unknown')}",
-        f"validation: {validation.get('reason', '')}",
-        f"approved: {'true' if approved else 'false'}",
-        f"execution: {execution_line}",
+        f"status: {record.get('status')}",
+        f"goal: {record.get('goal')}",
+        f"subtask: {record.get('subtask')}",
+        f"screenshot: {record.get('before_screenshot_path')}",
+        f"proposal: {proposal.get('type')}",
+        f"validation: {validation.get('reason')}",
+        f"approved: {str(bool(record.get('approved'))).lower()}",
     ]
+    if isinstance(execution, dict):
+        state = "ok" if execution.get("ok", True) else "failed"
+        route = execution.get("route") or "unknown"
+        lines.append(f"execution: {state} via {route}")
+    else:
+        lines.append("execution: none")
     return "\n".join(lines)
