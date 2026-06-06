@@ -517,6 +517,75 @@ def test_harness_once_preview_reports_missing_config(monkeypatch):
     assert "Run `aria setup` or pass --config" in result.stdout
 
 
+def test_harness_once_approve_executes_after_confirmation(monkeypatch):
+    calls = []
+
+    def fake_payload(goal, subtask, success_condition, apps, config_path, approve):
+        calls.append((goal, subtask, success_condition, apps, str(config_path), approve))
+        return {
+            "status": "executed",
+            "will_execute": True,
+            "trace_path": "/tmp/trace.jsonl",
+            "summary": "status: executed",
+        }
+
+    monkeypatch.setattr("aria.__main__._build_harness_approve_payload", fake_payload)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "harness-once",
+            "--goal",
+            "open search",
+            "--subtask",
+            "find input",
+            "--success",
+            "input visible",
+            "--approve",
+            "--config",
+            ".aria/config.json",
+        ],
+        input="y\n",
+    )
+
+    assert result.exit_code == 0
+    assert calls
+    assert '"status": "executed"' in result.stdout
+    assert '"trace_path": "/tmp/trace.jsonl"' in result.stdout
+    assert "status: executed" in result.stdout
+
+
+def test_harness_once_approve_can_deny(monkeypatch):
+    def fake_payload(goal, subtask, success_condition, apps, config_path, approve):
+        assert approve({"proposal": {"type": "wait"}}) is False
+        return {
+            "status": "denied",
+            "will_execute": False,
+            "trace_path": "/tmp/trace.jsonl",
+            "summary": "status: denied",
+        }
+
+    monkeypatch.setattr("aria.__main__._build_harness_approve_payload", fake_payload)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "harness-once",
+            "--goal",
+            "open search",
+            "--subtask",
+            "find input",
+            "--success",
+            "input visible",
+            "--approve",
+        ],
+        input="n\n",
+    )
+
+    assert result.exit_code == 0
+    assert '"status": "denied"' in result.stdout
+
+
 def test_harness_once_requires_one_mode():
     result = CliRunner().invoke(
         app,
@@ -532,7 +601,7 @@ def test_harness_once_requires_one_mode():
     )
 
     assert result.exit_code == 1
-    assert "Choose --dry-run or --preview" in result.stdout
+    assert "Choose --dry-run, --preview, or --approve" in result.stdout
 
 
 def test_harness_once_rejects_multiple_modes():
@@ -553,3 +622,51 @@ def test_harness_once_rejects_multiple_modes():
 
     assert result.exit_code == 1
     assert "Choose only one" in result.stdout
+
+
+def test_harness_once_rejects_preview_and_approve_together():
+    result = CliRunner().invoke(
+        app,
+        [
+            "harness-once",
+            "--goal",
+            "open search",
+            "--subtask",
+            "find input",
+            "--success",
+            "input visible",
+            "--preview",
+            "--approve",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Choose only one" in result.stdout
+
+
+def test_approved_turn_trace_record_extracts_preview_fields():
+    from aria.__main__ import _approved_turn_trace_record
+
+    record = _approved_turn_trace_record(
+        mode="approve",
+        goal="Search",
+        subtask="Find input",
+        success_condition="input visible",
+        result={
+            "status": "executed",
+            "preview": {
+                "observation": {
+                    "screenshot_path": "/tmp/screen.png",
+                    "candidates": [{"id": "candidate_1"}],
+                },
+                "proposal": {"type": "wait"},
+                "validation": {"ok": True, "reason": "wait accepted"},
+            },
+            "execution": {"ok": True, "route": "wait"},
+        },
+    )
+
+    assert record["before_screenshot_path"] == "/tmp/screen.png"
+    assert record["candidate_count"] == 1
+    assert record["proposal"] == {"type": "wait"}
+    assert record["approved"] is True
