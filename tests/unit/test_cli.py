@@ -1,7 +1,10 @@
+import json
+
 from typer.testing import CliRunner
 
 from aria.__main__ import app
 from aria.conductor.registry import WindowInfo
+from aria.harness.config import load_harness_config
 from aria.models import Element, SemanticMap, Window
 
 
@@ -150,6 +153,47 @@ def test_launch_command_starts_supported_app(monkeypatch):
     assert result.exit_code == 0
     assert '"app": "VS Code"' in result.stdout
     assert '"port": 9223' in result.stdout
+
+
+def test_setup_command_writes_default_harness_config(tmp_path):
+    config_path = tmp_path / ".aria" / "config.json"
+
+    result = CliRunner().invoke(app, ["setup", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    output = json.loads(result.stdout)
+    assert output["status"] == "complete"
+    assert output["config_path"] == str(config_path)
+    config = load_harness_config(config_path)
+    assert config.actor.provider == "openai"
+    assert config.safety.approval_mode == "always"
+    assert config.trace.output_dir == config_path.parent / "runs"
+
+
+def test_doctor_command_prints_structured_result(monkeypatch, tmp_path):
+    config_path = tmp_path / ".aria" / "config.json"
+
+    monkeypatch.setattr(
+        "aria.__main__.run_harness_doctor",
+        lambda config_path: {
+            "status": "warn",
+            "config_path": str(config_path),
+            "checks": [
+                {
+                    "name": "config",
+                    "status": "pass",
+                    "message": "config readable",
+                    "required": True,
+                }
+            ],
+        },
+    )
+
+    result = CliRunner().invoke(app, ["doctor", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert '"status": "warn"' in result.stdout
+    assert '"name": "config"' in result.stdout
 
 
 def test_run_command_prints_planner_result(monkeypatch):

@@ -23,7 +23,8 @@ from aria.app_discovery import (
 from aria.backends.cdp import CDPBackend
 from aria.conductor.local import LocalConductor
 from aria.conductor.registry import WindowRegistry
-from aria.harness.config import DEFAULT_CONFIG_PATH, load_harness_config
+from aria.harness.config import DEFAULT_CONFIG_PATH, HarnessConfig, load_harness_config, save_harness_config
+from aria.harness.doctor import run_harness_doctor
 from aria.harness.execute import HarnessExecutor
 from aria.harness.observe import PillowScreenshotCapture, build_observation_bundle
 from aria.harness.pixel import WindowsPixelExecutor
@@ -102,6 +103,41 @@ def launch(app_name: str, restart: bool = typer.Option(False, "--restart")) -> N
     """Launch a supported app with its CDP debug port enabled."""
     try:
         result = launch_app(app_name, restart=restart)
+    except Exception as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    _print_json(result)
+
+
+@app.command()
+def setup(
+    config_path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", help="Harness config path."),
+) -> None:
+    """Write the default harness config."""
+    config = HarnessConfig()
+    config.trace.output_dir = config_path.parent / "runs"
+    try:
+        save_harness_config(config_path, config)
+    except Exception as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    _print_json(
+        {
+            "status": "complete",
+            "config_path": str(config_path),
+            "trace_dir": str(config.trace.output_dir),
+            "api_key_env": config.actor.api_key_env,
+        }
+    )
+
+
+@app.command()
+def doctor(
+    config_path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", help="Harness config path."),
+) -> None:
+    """Check whether the harness can run on this machine."""
+    try:
+        result = run_harness_doctor(config_path=config_path)
     except Exception as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from exc
@@ -452,7 +488,7 @@ class _ScreenshotOnlyObserver:
 
 
 def _print_json(data: object) -> None:
-    console.print(json.dumps(data, indent=2, ensure_ascii=True))
+    console.print(json.dumps(data, indent=2, ensure_ascii=True), soft_wrap=True)
 
 
 if __name__ == "__main__":
