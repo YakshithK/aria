@@ -1,4 +1,5 @@
-from aria.harness.trace_summary import summarize_approved_turn
+from aria.harness.models import HarnessResult, VerificationResult
+from aria.harness.trace_summary import summarize_approved_turn, summarize_subtask_result
 
 
 def test_summarize_approved_turn_includes_executed_action_details():
@@ -63,3 +64,36 @@ def test_approved_turn_summary_includes_visual_artifacts():
 
     assert "actor image: .aria/runs/run/actor-grid.png" in summary
     assert "proposal image: .aria/runs/run/proposal-click.png" in summary
+
+
+def test_summarize_subtask_result_lists_turns_and_artifacts():
+    result = HarnessResult(
+        status="complete",
+        turns=1,
+        message="input visible",
+        verification=VerificationResult(status="complete", confidence=0.9, evidence="input visible"),
+        action_trace=[
+            {
+                "turn": 1,
+                "before_screenshot_path": "/tmp/before.png",
+                "after_screenshot_path": "/tmp/after.png",
+                "proposal": {"type": "click", "x": 100, "y": 50},
+                "validation": {"ok": True, "reason": "pixel click accepted"},
+                "approved": True,
+                "execution": {"ok": True, "route": "pixel"},
+                "verification": {"status": "complete", "evidence": "input visible"},
+                "actor_image_path": ".aria/runs/run/actor-grid.png",
+                "proposal_debug_image_path": ".aria/runs/run/proposal-click.png",
+            }
+        ],
+    )
+
+    summary = summarize_subtask_result(result)
+
+    assert "status: complete" in summary
+    assert "turns: 1" in summary
+    assert "turn 1: click" in summary
+    assert "approved: true" in summary
+    assert "actor image: .aria/runs/run/actor-grid.png" in summary
+    assert "proposal image: .aria/runs/run/proposal-click.png" in summary
+    assert "verification: complete - input visible" in summary
