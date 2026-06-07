@@ -452,6 +452,24 @@ def test_runner_retries_after_incomplete_verification():
     assert len(executor.actions) == 2
 
 
+def test_runner_requests_approval_for_each_turn():
+    approvals = []
+
+    result = run_subtask(
+        goal="Search Notion",
+        subtask="Click the visible Search button",
+        success_condition="A search input is visible",
+        observer=FakeObserver(),
+        actor=FakeActor(click_search(), click_search()),
+        verifier=FakeVerifier(verification("incomplete"), verification("complete")),
+        executor=FakeExecutor(),
+        approve=lambda preview: approvals.append(preview.proposal.type) or True,
+    )
+
+    assert result.status == "complete"
+    assert approvals == ["click_element", "click_element"]
+
+
 def test_runner_fails_when_validator_rejects_action():
     result = run_subtask(
         goal="Search Notion",
@@ -524,3 +542,26 @@ def test_runner_trace_records_candidates_and_after_screenshot():
     assert records[0]["before_screenshot_path"] == "/tmp/screen-1.png"
     assert records[0]["after_screenshot_path"] == "/tmp/screen-2.png"
     assert records[0]["candidates"][0]["id"] == "candidate_1"
+
+
+def test_runner_trace_records_visual_artifacts_for_raw_click():
+    records = []
+    visual_debugger = FakeVisualDebugger()
+
+    result = run_subtask(
+        goal="Search",
+        subtask="Find input",
+        success_condition="input visible",
+        observer=PreviewObserver(preview_observation()),
+        actor=FakeActor(ActionProposal(type="click", x=100, y=50, confidence=0.8, evidence="target")),
+        verifier=FakeVerifier(verification("complete")),
+        executor=FakeExecutor(),
+        trace_writer=records.append,
+        approve=lambda preview: True,
+        visual_debugger=visual_debugger,
+        screenshot_bytes_loader=lambda path: b"png",
+    )
+
+    assert result.status == "complete"
+    assert records[0]["actor_image_path"] == "/tmp/actor-grid.png"
+    assert records[0]["proposal_debug_image_path"] == "/tmp/proposal-click.png"

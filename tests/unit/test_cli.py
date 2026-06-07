@@ -674,6 +674,45 @@ def test_harness_once_approve_can_deny(monkeypatch):
     assert '"status": "denied"' in result.stdout
 
 
+def test_harness_once_run_calls_subtask_helper(monkeypatch):
+    calls = []
+
+    def fake_run(goal, subtask, success_condition, apps, config_path, approve):
+        calls.append((goal, subtask, success_condition, apps, str(config_path), approve))
+        return {
+            "status": "complete",
+            "turns": 1,
+            "trace_path": "/tmp/trace.jsonl",
+            "summary": "status: complete",
+            "will_execute": False,
+        }
+
+    monkeypatch.setattr("aria.__main__._build_harness_run_payload", fake_run)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "harness-once",
+            "--goal",
+            "open search",
+            "--subtask",
+            "find input",
+            "--success",
+            "input visible",
+            "--run",
+            "--config",
+            ".aria/config.json",
+        ],
+        input="y\n",
+    )
+
+    assert result.exit_code == 0
+    assert calls
+    assert calls[0][0] == "open search"
+    assert '"status": "complete"' in result.stdout
+    assert '"trace_path": "/tmp/trace.jsonl"' in result.stdout
+
+
 def test_harness_once_requires_one_mode():
     result = CliRunner().invoke(
         app,
@@ -689,7 +728,7 @@ def test_harness_once_requires_one_mode():
     )
 
     assert result.exit_code == 1
-    assert "Choose --dry-run, --preview, or --approve" in result.stdout
+    assert "Choose --dry-run, --preview, --approve, or --run" in result.stdout
 
 
 def test_harness_once_rejects_multiple_modes():
@@ -732,6 +771,26 @@ def test_harness_once_rejects_preview_and_approve_together():
     assert "Choose only one" in result.stdout
 
 
+def test_harness_once_rejects_approve_and_run_together():
+    result = CliRunner().invoke(
+        app,
+        [
+            "harness-once",
+            "--goal",
+            "open search",
+            "--subtask",
+            "find input",
+            "--success",
+            "input visible",
+            "--approve",
+            "--run",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Choose only one" in result.stdout
+
+
 def test_approved_turn_trace_record_extracts_preview_fields():
     from aria.__main__ import _approved_turn_trace_record
 
@@ -762,3 +821,62 @@ def test_approved_turn_trace_record_extracts_preview_fields():
     assert record["approved"] is True
     assert record["actor_image_path"] == ".aria/runs/run/actor-grid.png"
     assert record["proposal_debug_image_path"] == ".aria/runs/run/proposal-click.png"
+
+
+def test_harness_run_payload_wires_verifier_to_observer_image_loader(monkeypatch, tmp_path):
+    from aria.__main__ import _build_harness_run_payload
+    from aria.harness.config import HarnessConfig, save_harness_config
+
+    config_path = tmp_path / ".aria" / "config.json"
+    save_harness_config(config_path, HarnessConfig())
+
+    class FakeObserver:
+        def __init__(self):
+            self.loader_paths = []
+
+        def image_loader(self, path):
+            self.loader_paths.append(path)
+            return b"png"
+
+        def actor_image_loader(self, visual_debugger):
+            return lambda observation: b"actor-png"
+
+    class FakeResult:
+        def model_dump(self):
+            return {
+                "status": "complete",
+                "turns": 1,
+                "message": "done",
+                "verification": None,
+                "action_trace": [],
+            }
+
+    observer = FakeObserver()
+    captured = {}
+
+    monkeypatch.setattr("aria.__main__._build_preview_observer", lambda apps: observer)
+    monkeypatch.setattr("aria.__main__.build_completion_client", lambda model_config: object())
+    monkeypatch.setattr("aria.__main__.build_json_vlm_actor", lambda **kwargs: object())
+
+    def fake_build_verifier(**kwargs):
+        captured["image_loader"] = kwargs["image_loader"]
+        return object()
+
+    monkeypatch.setattr("aria.__main__.build_json_vlm_verifier", fake_build_verifier)
+    monkeypatch.setattr("aria.__main__._build_approved_turn_executor", lambda apps: object())
+    monkeypatch.setattr("aria.__main__.VisualDebugger", lambda output_dir: object())
+    monkeypatch.setattr("aria.__main__.write_harness_trace", lambda record, trace_dir: tmp_path / "trace.jsonl")
+    monkeypatch.setattr("aria.__main__.summarize_subtask_result", lambda result: "status: complete")
+    monkeypatch.setattr("aria.__main__.run_subtask", lambda **kwargs: FakeResult())
+
+    _build_harness_run_payload(
+        "goal",
+        "subtask",
+        "success",
+        [],
+        config_path,
+        approve=lambda preview: True,
+    )
+
+    assert captured["image_loader"]("/tmp/screen.png") == b"png"
+    assert observer.loader_paths == ["/tmp/screen.png"]

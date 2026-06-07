@@ -30,12 +30,12 @@ from aria.harness.execute import HarnessExecutor
 from aria.harness.observe import PillowScreenshotCapture, build_observation_bundle
 from aria.harness.pixel import WindowsPixelExecutor
 from aria.harness.provider import build_completion_client
-from aria.harness.runner import preview_turn, run_approved_turn
+from aria.harness.runner import preview_turn, run_approved_turn, run_subtask
 from aria.harness.semantic import LocalSemanticExecutor, SemanticHarnessObserver, SemanticObserverAdapter
 from aria.harness.trace import write_harness_trace
-from aria.harness.trace_summary import summarize_approved_turn
+from aria.harness.trace_summary import summarize_approved_turn, summarize_subtask_result
 from aria.harness.visual_debug import VisualDebugger
-from aria.harness.vlm import build_json_vlm_actor
+from aria.harness.vlm import build_json_vlm_actor, build_json_vlm_verifier
 from aria.launcher import (
     launch_app,
 )
@@ -184,15 +184,16 @@ def harness_once(
     dry_run: bool = typer.Option(False, "--dry-run", help="Capture observation only; do not call models or execute actions."),
     preview: bool = typer.Option(False, "--preview", help="Call the actor VLM and validate one action; do not execute."),
     approve: bool = typer.Option(False, "--approve", help="Preview, ask for confirmation, then execute one valid action."),
+    run_loop: bool = typer.Option(False, "--run", help="Run a closed-loop subtask with approval before each action."),
     config_path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", help="Harness config path."),
 ) -> None:
     """Capture one harness observation for a subtask."""
-    selected_modes = [dry_run, preview, approve]
+    selected_modes = [dry_run, preview, approve, run_loop]
     if sum(bool(mode) for mode in selected_modes) > 1:
-        console.print("[red]Error:[/red] Choose only one of --dry-run, --preview, or --approve.")
+        console.print("[red]Error:[/red] Choose only one of --dry-run, --preview, --approve, or --run.")
         raise typer.Exit(1)
     if not any(selected_modes):
-        console.print("[red]Error:[/red] Choose --dry-run, --preview, or --approve.")
+        console.print("[red]Error:[/red] Choose --dry-run, --preview, --approve, or --run.")
         raise typer.Exit(1)
 
     try:
@@ -207,8 +208,17 @@ def harness_once(
                     apps,
                     config_path,
                 )
-            else:
+            elif approve:
                 result = _build_harness_approve_payload(
+                    goal,
+                    subtask,
+                    success_condition,
+                    apps,
+                    config_path,
+                    approve=_confirm_preview_action,
+                )
+            else:
+                result = _build_harness_run_payload(
                     goal,
                     subtask,
                     success_condition,
@@ -420,6 +430,77 @@ def _build_harness_approve_payload(
         "trace_path": str(trace_path),
         "summary": summary,
         "will_execute": result["status"] == "executed",
+    }
+
+
+def _build_harness_run_payload(
+    goal: str,
+    subtask: str,
+    success_condition: str,
+    apps: list[str],
+    config_path: Path,
+    approve,
+) -> dict[str, object]:
+    if not config_path.exists():
+        raise FileNotFoundError(f"config not found: {config_path}. Run `aria setup` or pass --config.")
+    config = load_harness_config(config_path)
+    actor_client = build_completion_client(config.actor)
+    verifier_client = build_completion_client(config.verifier)
+    observer = _build_preview_observer(apps)
+    visual_debugger = VisualDebugger(output_dir=_harness_artifact_dir(config))
+    actor = build_json_vlm_actor(
+        client=actor_client,
+        config=config.actor,
+        image_loader=observer.image_loader,
+        actor_image_loader=observer.actor_image_loader(visual_debugger),
+    )
+    verifier = build_json_vlm_verifier(
+        client=verifier_client,
+        config=config.verifier,
+        image_loader=observer.image_loader,
+    )
+    executor = _build_approved_turn_executor(apps)
+    trace_records: list[dict[str, object]] = []
+    result = run_subtask(
+        goal=goal,
+        subtask=subtask,
+        success_condition=success_condition,
+        observer=observer,
+        actor=actor,
+        verifier=verifier,
+        executor=executor,
+        max_turns=config.safety.max_turns_per_subtask,
+        trace_writer=trace_records.append,
+        approve=approve if config.safety.approval_mode == "always" else None,
+        visual_debugger=visual_debugger,
+        screenshot_bytes_loader=observer.image_loader,
+    )
+    trace_path = write_harness_trace(
+        {
+            "mode": "run",
+            "goal": goal,
+            "subtask": subtask,
+            "success_condition": success_condition,
+            "result": result.model_dump(),
+            "turn_records": trace_records,
+        },
+        trace_dir=config.trace.output_dir,
+    )
+    return {
+        **result.model_dump(),
+        "mode": "run",
+        "goal": goal,
+        "subtask": subtask,
+        "success_condition": success_condition,
+        "apps": apps,
+        "config_path": str(config_path),
+        "actor_provider": config.actor.provider,
+        "actor_model": config.actor.model,
+        "verifier_provider": config.verifier.provider,
+        "verifier_model": config.verifier.model,
+        "trace_path": str(trace_path),
+        "summary": summarize_subtask_result(result),
+        "will_execute": False,
     }
 
 
