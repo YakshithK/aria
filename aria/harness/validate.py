@@ -47,7 +47,7 @@ def validate_action(
     if proposal.type == "type":
         if not proposal.text:
             return _reject("type requires text")
-        if not _has_recent_editable_focus(bundle):
+        if not _has_recent_editable_focus(bundle) and not _has_current_focus_context(proposal, bundle):
             return _reject("type requires recent editable focus evidence")
         return _accept("keyboard action accepted", "keyboard")
     if proposal.type == "key_combo":
@@ -175,6 +175,16 @@ def _has_recent_editable_focus(bundle: ObservationBundle) -> bool:
         if isinstance(result, dict) and result.get("focused_editable") is True:
             return True
     return False
+
+
+def _has_current_focus_context(proposal: ActionProposal, bundle: ObservationBundle) -> bool:
+    task_text = f"{bundle.subtask} {bundle.success_condition}".lower()
+    evidence_text = proposal.evidence.lower()
+    focus_terms = ("focused", "active", "ready for typing", "ready for input")
+    editable_terms = ("input", "textbox", "text field", "search", "address bar", "omnibox")
+    has_user_focus_context = any(term in task_text for term in focus_terms)
+    has_editable_context = any(term in f"{task_text} {evidence_text}" for term in editable_terms)
+    return has_user_focus_context and has_editable_context
 
 
 def _is_repeated_action(proposal: ActionProposal, bundle: ObservationBundle) -> bool:

@@ -199,6 +199,28 @@ def test_type_requires_recent_editable_focus():
     assert "editable" in result.reason.lower()
 
 
+def test_type_accepts_explicit_current_focus_context():
+    bundle = make_bundle().model_copy(
+        update={
+            "subtask": "Type aria into the focused search input",
+            "success_condition": "The focused search input contains aria",
+        }
+    )
+
+    result = validate_action(
+        ActionProposal(
+            type="type",
+            text="aria",
+            confidence=0.8,
+            evidence="the search input is focused and ready for typing",
+        ),
+        bundle,
+    )
+
+    assert result.ok is True
+    assert result.execution_route == "keyboard"
+
+
 def test_type_accepts_recent_editable_focus_result():
     bundle = make_bundle()
     bundle.recent_actions = [
