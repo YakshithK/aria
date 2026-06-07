@@ -123,6 +123,8 @@ def test_wsl_backend_click_sends_powershell_mouse_commands(tmp_path):
     assert backend.mouse_up() == {"ok": True}
 
     scripts = "\n".join(call[-1] for call in calls)
+    assert "SetProcessDPIAware" in scripts
+    assert scripts.index("SetProcessDPIAware") < scripts.index("SetCursorPos(20, 30)")
     assert "SetCursorPos(20, 30)" in scripts
     assert "mouse_event(2, 0, 0, 0, 0)" in scripts
     assert "mouse_event(4, 0, 0, 0, 0)" in scripts

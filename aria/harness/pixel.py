@@ -207,11 +207,14 @@ using System;
 using System.Runtime.InteropServices;
 public class AriaInput {
     [DllImport("user32.dll")]
+    public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")]
     public static extern bool SetCursorPos(int X, int Y);
     [DllImport("user32.dll")]
     public static extern void mouse_event(uint dwFlags, uint dx, uint dy, int dwData, int dwExtraInfo);
 }
 "@
+[AriaInput]::SetProcessDPIAware() | Out-Null
 """.strip(),
             statement,
         ]
