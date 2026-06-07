@@ -340,6 +340,33 @@ def test_build_json_vlm_verifier_uses_configured_model_and_image_loader(tmp_path
     assert isinstance(client.calls[0]["messages"][1]["content"], list)
 
 
+def test_build_json_vlm_verifier_uses_custom_image_loader():
+    calls = []
+
+    def image_loader(path: str) -> bytes:
+        calls.append(path)
+        return b"png"
+
+    verifier = build_json_vlm_verifier(
+        client=FakeClient('{"status":"complete","confidence":0.9,"evidence":"done"}'),
+        config=ModelConfig(model="vision-model"),
+        image_loader=image_loader,
+    )
+
+    before = bundle().model_copy(update={"screenshot_path": "/tmp/before.png"})
+    after = bundle().model_copy(update={"screenshot_path": "/tmp/after.png", "turn": 2})
+
+    result = verifier.verify(
+        before=before,
+        after=after,
+        action={"type": "wait", "seconds": 1},
+        execution={"ok": True, "route": "wait"},
+    )
+
+    assert result.status == "complete"
+    assert calls == ["/tmp/before.png", "/tmp/after.png"]
+
+
 def test_json_vlm_actor_repairs_malformed_response_to_valid_action():
     client = SequenceClient(
         [
