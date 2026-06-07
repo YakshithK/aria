@@ -509,6 +509,38 @@ def test_runner_does_not_execute_when_approval_denies():
     assert result.action_trace[0]["execution"] is None
 
 
+def test_runner_stops_on_actor_fail_without_approval_or_execution():
+    executor = FakeExecutor()
+    records = []
+
+    result = run_subtask(
+        goal="Search",
+        subtask="Find input",
+        success_condition="input focused",
+        observer=FakeObserver(),
+        actor=FakeActor(
+            ActionProposal(
+                type="fail",
+                confidence=1.0,
+                evidence="VLM actor returned invalid action JSON",
+                reason="invalid_vlm_action",
+            )
+        ),
+        verifier=FakeVerifier(),
+        executor=executor,
+        trace_writer=records.append,
+        approve=lambda preview: (_ for _ in ()).throw(AssertionError("fail should not ask approval")),
+    )
+
+    assert result.status == "failed"
+    assert result.turns == 1
+    assert result.message == "VLM actor returned invalid action JSON"
+    assert executor.actions == []
+    assert records[0]["proposal"]["type"] == "fail"
+    assert records[0]["approved"] is None
+    assert records[0]["execution"] is None
+
+
 def test_runner_fails_after_max_turns():
     result = run_subtask(
         goal="Search Notion",

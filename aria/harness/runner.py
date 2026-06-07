@@ -220,6 +220,29 @@ def run_subtask(
                 action_trace=action_trace,
             )
 
+        if proposal.type == "fail":
+            record = _trace_record(
+                turn,
+                before,
+                None,
+                proposal,
+                validation.model_dump(),
+                None,
+                None,
+                approved=None,
+                actor_image_path=actor_image_path,
+                proposal_debug_image_path=proposal_debug_image_path,
+            )
+            action_trace.append(record)
+            _write_trace(trace_writer, record)
+            return HarnessResult(
+                status="failed",
+                turns=turn,
+                message=proposal.evidence,
+                verification=None,
+                action_trace=action_trace,
+            )
+
         preview = TurnPreview(
             observation=before,
             proposal=proposal,
