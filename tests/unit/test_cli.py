@@ -475,6 +475,8 @@ def test_harness_once_dry_run_prints_observation_payload(monkeypatch):
             "--app",
             "chrome",
             "--dry-run",
+            "--start-delay",
+            "0",
         ],
     )
 
@@ -529,6 +531,8 @@ def test_harness_once_preview_prints_proposal_and_validation(monkeypatch):
             "--preview",
             "--config",
             ".aria/config.json",
+            "--start-delay",
+            "0",
         ],
     )
 
@@ -573,6 +577,8 @@ def test_harness_once_preview_prints_visual_artifact_paths(monkeypatch):
             "--success",
             "input visible",
             "--preview",
+            "--start-delay",
+            "0",
         ],
     )
 
@@ -598,6 +604,8 @@ def test_harness_once_preview_reports_missing_config(monkeypatch):
             "--success",
             "input visible",
             "--preview",
+            "--start-delay",
+            "0",
         ],
     )
 
@@ -632,6 +640,8 @@ def test_harness_once_approve_executes_after_confirmation(monkeypatch):
             "--approve",
             "--config",
             ".aria/config.json",
+            "--start-delay",
+            "0",
         ],
         input="y\n",
     )
@@ -666,6 +676,8 @@ def test_harness_once_approve_can_deny(monkeypatch):
             "--success",
             "input visible",
             "--approve",
+            "--start-delay",
+            "0",
         ],
         input="n\n",
     )
@@ -702,6 +714,8 @@ def test_harness_once_run_calls_subtask_helper(monkeypatch):
             "--run",
             "--config",
             ".aria/config.json",
+            "--start-delay",
+            "0",
         ],
         input="y\n",
     )
@@ -711,6 +725,83 @@ def test_harness_once_run_calls_subtask_helper(monkeypatch):
     assert calls[0][0] == "open search"
     assert '"status": "complete"' in result.stdout
     assert '"trace_path": "/tmp/trace.jsonl"' in result.stdout
+
+
+def test_harness_once_waits_before_capture_by_default(monkeypatch):
+    events = []
+
+    monkeypatch.setattr("aria.__main__.time.sleep", lambda seconds: events.append(("sleep", seconds)))
+    monkeypatch.setattr(
+        "aria.__main__._build_harness_dry_run_payload",
+        lambda goal, subtask, success_condition, apps: events.append(("payload", goal))
+        or {
+            "status": "dry_run",
+            "goal": goal,
+            "subtask": subtask,
+            "success_condition": success_condition,
+            "apps": apps,
+            "screenshot_path": "/tmp/screen.png",
+            "screen_size": [800, 600],
+            "candidate_count": 0,
+            "will_execute": False,
+        },
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "harness-once",
+            "--goal",
+            "open search",
+            "--subtask",
+            "find input",
+            "--success",
+            "input visible",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert events == [("sleep", 1.0), ("payload", "open search")]
+
+
+def test_harness_once_start_delay_can_be_disabled(monkeypatch):
+    sleeps = []
+
+    monkeypatch.setattr("aria.__main__.time.sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(
+        "aria.__main__._build_harness_dry_run_payload",
+        lambda goal, subtask, success_condition, apps: {
+            "status": "dry_run",
+            "goal": goal,
+            "subtask": subtask,
+            "success_condition": success_condition,
+            "apps": apps,
+            "screenshot_path": "/tmp/screen.png",
+            "screen_size": [800, 600],
+            "candidate_count": 0,
+            "will_execute": False,
+        },
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "harness-once",
+            "--goal",
+            "open search",
+            "--subtask",
+            "find input",
+            "--success",
+            "input visible",
+            "--dry-run",
+            "--start-delay",
+            "0",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert sleeps == []
 
 
 def test_harness_once_requires_one_mode():

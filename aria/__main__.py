@@ -185,6 +185,7 @@ def harness_once(
     preview: bool = typer.Option(False, "--preview", help="Call the actor VLM and validate one action; do not execute."),
     approve: bool = typer.Option(False, "--approve", help="Preview, ask for confirmation, then execute one valid action."),
     run_loop: bool = typer.Option(False, "--run", help="Run a closed-loop subtask with approval before each action."),
+    start_delay: float = typer.Option(1.0, "--start-delay", help="Seconds to wait before the first screen capture."),
     config_path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", help="Harness config path."),
 ) -> None:
     """Capture one harness observation for a subtask."""
@@ -197,6 +198,7 @@ def harness_once(
         raise typer.Exit(1)
 
     try:
+        _sleep_before_harness_capture(start_delay)
         if dry_run:
             result = _build_harness_dry_run_payload(goal, subtask, success_condition, apps)
         else:
@@ -230,6 +232,12 @@ def harness_once(
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from exc
     _print_json(result)
+
+
+def _sleep_before_harness_capture(seconds: float) -> None:
+    if seconds <= 0:
+        return
+    time.sleep(seconds)
 
 
 @app.command()
