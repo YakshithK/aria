@@ -467,6 +467,30 @@ def test_runner_fails_when_validator_rejects_action():
     assert "confidence" in result.message.lower()
 
 
+def test_runner_does_not_execute_when_approval_denies():
+    executor = FakeExecutor()
+    previews = []
+
+    result = run_subtask(
+        goal="Search Notion",
+        subtask="Click the visible Search button",
+        success_condition="A search input is visible",
+        observer=FakeObserver(),
+        actor=FakeActor(click_search()),
+        verifier=FakeVerifier(),
+        executor=executor,
+        approve=lambda preview: previews.append(preview) or False,
+    )
+
+    assert result.status == "failed"
+    assert result.turns == 1
+    assert result.message == "action not approved"
+    assert executor.actions == []
+    assert len(previews) == 1
+    assert result.action_trace[0]["approved"] is False
+    assert result.action_trace[0]["execution"] is None
+
+
 def test_runner_fails_after_max_turns():
     result = run_subtask(
         goal="Search Notion",

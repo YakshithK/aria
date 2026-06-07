@@ -174,6 +174,9 @@ def run_subtask(
     executor: Executor,
     max_turns: int = 5,
     trace_writer: TraceWriter | None = None,
+    approve: ApprovalCallback | None = None,
+    visual_debugger: Any | None = None,
+    screenshot_bytes_loader: Callable[[str], bytes] | None = None,
 ) -> HarnessResult:
     recent_actions: list[ActionRecord] = []
     action_trace: list[dict[str, Any]] = []
@@ -188,8 +191,25 @@ def run_subtask(
         )
         proposal = actor.propose(before)
         validation = validate_action(proposal, before)
+        actor_image_path, proposal_debug_image_path = _visual_artifacts_for_turn(
+            observation=before,
+            proposal=proposal,
+            visual_debugger=visual_debugger,
+            screenshot_bytes_loader=screenshot_bytes_loader,
+        )
         if not validation.ok:
-            record = _trace_record(turn, before, None, proposal, validation.model_dump(), None, None)
+            record = _trace_record(
+                turn,
+                before,
+                None,
+                proposal,
+                validation.model_dump(),
+                None,
+                None,
+                approved=None,
+                actor_image_path=actor_image_path,
+                proposal_debug_image_path=proposal_debug_image_path,
+            )
             action_trace.append(record)
             _write_trace(trace_writer, record)
             return HarnessResult(
@@ -200,9 +220,53 @@ def run_subtask(
                 action_trace=action_trace,
             )
 
+        preview = TurnPreview(
+            observation=before,
+            proposal=proposal,
+            validation=validation,
+            actor_image_path=actor_image_path,
+            proposal_debug_image_path=proposal_debug_image_path,
+        )
+        approved = True
+        if approve is not None:
+            approved = approve(preview)
+        if not approved:
+            record = _trace_record(
+                turn,
+                before,
+                None,
+                proposal,
+                validation.model_dump(),
+                None,
+                None,
+                approved=False,
+                actor_image_path=actor_image_path,
+                proposal_debug_image_path=proposal_debug_image_path,
+            )
+            action_trace.append(record)
+            _write_trace(trace_writer, record)
+            return HarnessResult(
+                status="failed",
+                turns=turn,
+                message="action not approved",
+                verification=None,
+                action_trace=action_trace,
+            )
+
         execution = executor.execute(proposal, validation, before)
         if execution.get("ok") is False:
-            record = _trace_record(turn, before, None, proposal, validation.model_dump(), execution, None)
+            record = _trace_record(
+                turn,
+                before,
+                None,
+                proposal,
+                validation.model_dump(),
+                execution,
+                None,
+                approved=True,
+                actor_image_path=actor_image_path,
+                proposal_debug_image_path=proposal_debug_image_path,
+            )
             action_trace.append(record)
             _write_trace(trace_writer, record)
             return HarnessResult(
@@ -241,6 +305,9 @@ def run_subtask(
             validation.model_dump(),
             execution,
             verification.model_dump(),
+            approved=True,
+            actor_image_path=actor_image_path,
+            proposal_debug_image_path=proposal_debug_image_path,
         )
         action_trace.append(record)
         _write_trace(trace_writer, record)
@@ -279,6 +346,10 @@ def _trace_record(
     validation: dict[str, Any],
     execution: dict[str, Any] | None,
     verification: dict[str, Any] | None,
+    *,
+    approved: bool | None = None,
+    actor_image_path: str | None = None,
+    proposal_debug_image_path: str | None = None,
 ) -> dict[str, Any]:
     return {
         "turn": turn,
@@ -290,8 +361,11 @@ def _trace_record(
         "candidates": [candidate.model_dump() for candidate in before.candidates],
         "proposal": proposal.model_dump(exclude_none=True),
         "validation": validation,
+        "approved": approved,
         "execution": execution,
         "verification": verification,
+        "actor_image_path": actor_image_path,
+        "proposal_debug_image_path": proposal_debug_image_path,
     }
 
 
@@ -299,3 +373,28 @@ def _write_trace(trace_writer: TraceWriter | None, record: dict[str, Any]) -> No
     if trace_writer is None:
         return
     trace_writer(record)
+
+
+def _visual_artifacts_for_turn(
+    *,
+    observation: ObservationBundle,
+    proposal: ActionProposal,
+    visual_debugger: Any | None,
+    screenshot_bytes_loader: Callable[[str], bytes] | None,
+) -> tuple[str | None, str | None]:
+    if visual_debugger is None or screenshot_bytes_loader is None:
+        return None, None
+    screenshot_bytes = screenshot_bytes_loader(observation.screenshot_path)
+    artifacts = visual_debugger.prepare_actor_image(
+        screenshot_path=observation.screenshot_path,
+        screenshot_bytes=screenshot_bytes,
+    )
+    proposal_debug_image_path = None
+    if proposal.type == "click" and proposal.x is not None and proposal.y is not None:
+        proposal_debug_image_path = visual_debugger.save_click_marker(
+            screenshot_path=observation.screenshot_path,
+            screenshot_bytes=screenshot_bytes,
+            x=int(proposal.x),
+            y=int(proposal.y),
+        )
+    return artifacts.actor_image_path, proposal_debug_image_path
