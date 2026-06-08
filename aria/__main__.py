@@ -305,6 +305,8 @@ def _build_task_preview_plan_payload(task: str, config_path: Path) -> dict[str, 
     validation = validate_plan(plan.subtasks, max_subtasks=config.safety.max_subtasks)
     status = "preview_plan" if validation.ok else "invalid_plan"
     subtasks = [subtask.model_dump() for subtask in plan.subtasks]
+    planner_error = getattr(planner, "last_error", None)
+    planner_response_content = getattr(planner, "last_response_content", None)
     record = {
         "mode": "preview_plan",
         "goal": task,
@@ -318,6 +320,8 @@ def _build_task_preview_plan_payload(task: str, config_path: Path) -> dict[str, 
         },
         "validation": validation.model_dump(),
         "subtasks": subtasks,
+        "planner_error": planner_error,
+        "planner_response_content": planner_response_content,
         "will_execute": False,
     }
     trace_path = write_harness_trace(record, trace_dir=config.trace.output_dir)
@@ -328,6 +332,8 @@ def _build_task_preview_plan_payload(task: str, config_path: Path) -> dict[str, 
         "planner_model": config.planner.model,
         "validation": validation.model_dump(),
         "subtasks": subtasks,
+        "planner_error": planner_error,
+        "planner_response_content": planner_response_content,
         "trace_path": str(trace_path),
         "will_execute": False,
     }

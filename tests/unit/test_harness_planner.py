@@ -212,3 +212,13 @@ def test_json_task_planner_returns_empty_plan_for_malformed_response():
 
     assert result.goal == "search"
     assert result.subtasks == []
+
+
+def test_json_task_planner_records_failure_diagnostics_for_malformed_response():
+    planner = JsonTaskPlanner(client=FakeClient("not json"), model="planner-model")
+
+    planner.plan("search", max_subtasks=3)
+
+    assert planner.last_error is not None
+    assert "json" in planner.last_error.lower()
+    assert planner.last_response_content == "not json"

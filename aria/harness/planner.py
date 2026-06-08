@@ -78,18 +78,29 @@ class JsonTaskPlanner:
     def __init__(self, *, client: CompletionClient, model: str) -> None:
         self.client = client
         self.model = model
+        self.last_error: str | None = None
+        self.last_response_content: str | None = None
 
     def plan(self, task: str, *, max_subtasks: int) -> TaskPlan:
+        self.last_error = None
+        self.last_response_content = None
+        response: Any | None = None
         try:
             response = self.client.create_completion(
                 model=self.model,
                 messages=build_planner_messages(task, max_subtasks=max_subtasks),
                 temperature=0,
             )
+            content = _response_content(response)
+            self.last_response_content = content if isinstance(content, str) else None
             data = _json_from_response(response)
             subtasks = [PlannedSubtask(**item) for item in data.get("subtasks", [])]
             return TaskPlan(goal=task, subtasks=subtasks)
-        except Exception:
+        except Exception as exc:
+            if self.last_response_content is None and response is not None:
+                content = _response_content(response)
+                self.last_response_content = content if isinstance(content, str) else None
+            self.last_error = f"planner JSON error: {exc}"
             return TaskPlan(goal=task, subtasks=[])
 
 

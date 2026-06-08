@@ -962,6 +962,9 @@ def test_build_task_preview_plan_payload_reports_invalid_plan(monkeypatch, tmp_p
     save_harness_config(config_path, HarnessConfig())
 
     class FakePlanner:
+        last_error = "planner response must decode to a JSON object"
+        last_response_content = "[]"
+
         def plan(self, task, *, max_subtasks):
             return TaskPlan(
                 goal=task,
@@ -978,6 +981,8 @@ def test_build_task_preview_plan_payload_reports_invalid_plan(monkeypatch, tmp_p
 
     assert result["status"] == "invalid_plan"
     assert result["validation"]["ok"] is False
+    assert result["planner_error"] == "planner response must decode to a JSON object"
+    assert result["planner_response_content"] == "[]"
     assert result["will_execute"] is False
 
 
