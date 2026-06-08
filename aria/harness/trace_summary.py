@@ -1,6 +1,75 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
+
+
+def latest_harness_trace(trace_dir: Path) -> Path:
+    traces = sorted(
+        trace_dir.glob("*_harness.jsonl"),
+        key=lambda path: (path.stat().st_mtime, path.name),
+        reverse=True,
+    )
+    if not traces:
+        raise FileNotFoundError(f"no harness traces found in {trace_dir}")
+    return traces[0]
+
+
+def load_harness_trace(path: Path) -> dict[str, Any]:
+    with path.open() as handle:
+        line = handle.readline()
+    if not line:
+        raise ValueError(f"empty harness trace: {path}")
+    data = json.loads(line)
+    if not isinstance(data, dict):
+        raise ValueError(f"harness trace must contain a JSON object: {path}")
+    return data
+
+
+def summarize_harness_trace(record: dict[str, Any]) -> str:
+    result = record.get("result") or {}
+    lines = [
+        f"mode: {record.get('mode')}",
+        f"goal: {record.get('goal')}",
+        f"subtask: {record.get('subtask')}",
+        f"status: {result.get('status')}",
+        f"turns: {result.get('turns')}",
+        f"message: {result.get('message')}",
+    ]
+    for turn in result.get("action_trace") or []:
+        proposal = turn.get("proposal") or {}
+        validation = turn.get("validation") or {}
+        execution = turn.get("execution")
+        verification = turn.get("verification") or {}
+        lines.append(f"turn {turn.get('turn')}: {_proposal_label(proposal)}")
+        lines.append(f"validation: {validation.get('reason')}")
+        if turn.get("approved") is not None:
+            lines.append(f"approved: {str(bool(turn.get('approved'))).lower()}")
+        if isinstance(execution, dict):
+            state = "ok" if execution.get("ok", True) else "failed"
+            route = execution.get("route") or "unknown"
+            lines.append(f"execution: {state} via {route}")
+        if verification:
+            lines.append(
+                f"verification: {verification.get('status')} - {verification.get('evidence')}"
+            )
+        if turn.get("actor_image_path"):
+            lines.append(f"actor image: {turn['actor_image_path']}")
+        if turn.get("proposal_debug_image_path"):
+            lines.append(f"proposal image: {turn['proposal_debug_image_path']}")
+    return "\n".join(lines)
+
+
+def _proposal_label(proposal: dict[str, Any]) -> str:
+    action_type = proposal.get("type")
+    if action_type == "key_combo":
+        return f"{action_type} {proposal.get('keys')}"
+    if action_type == "type":
+        return f"{action_type} {proposal.get('text')!r}"
+    if action_type in {"click", "scroll"}:
+        return f"{action_type} ({proposal.get('x')}, {proposal.get('y')})"
+    return str(action_type)
 
 
 def summarize_approved_turn(record: dict[str, Any]) -> str:

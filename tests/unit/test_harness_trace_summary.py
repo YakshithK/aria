@@ -1,5 +1,13 @@
+from pathlib import Path
+
 from aria.harness.models import HarnessResult, VerificationResult
-from aria.harness.trace_summary import summarize_approved_turn, summarize_subtask_result
+from aria.harness.trace_summary import (
+    latest_harness_trace,
+    load_harness_trace,
+    summarize_approved_turn,
+    summarize_harness_trace,
+    summarize_subtask_result,
+)
 
 
 def test_summarize_approved_turn_includes_executed_action_details():
@@ -97,3 +105,60 @@ def test_summarize_subtask_result_lists_turns_and_artifacts():
     assert "actor image: .aria/runs/run/actor-grid.png" in summary
     assert "proposal image: .aria/runs/run/proposal-click.png" in summary
     assert "verification: complete - input visible" in summary
+
+
+def test_latest_harness_trace_returns_newest_harness_file(tmp_path: Path):
+    older = tmp_path / "20260608-010000_harness.jsonl"
+    newer = tmp_path / "20260608-020000_harness.jsonl"
+    older.write_text("{}\n")
+    newer.write_text("{}\n")
+    older.touch()
+    newer.touch()
+
+    result = latest_harness_trace(tmp_path)
+
+    assert result == newer
+
+
+def test_load_harness_trace_reads_first_json_record(tmp_path: Path):
+    path = tmp_path / "run_harness.jsonl"
+    path.write_text('{"mode":"run","result":{"status":"complete","turns":1,"action_trace":[]}}\n')
+
+    result = load_harness_trace(path)
+
+    assert result["mode"] == "run"
+    assert result["result"]["status"] == "complete"
+
+
+def test_summarize_harness_trace_lists_turn_actions_and_artifacts():
+    record = {
+        "mode": "run",
+        "goal": "search",
+        "subtask": "submit query",
+        "result": {
+            "status": "complete",
+            "turns": 1,
+            "message": "results visible",
+            "action_trace": [
+                {
+                    "turn": 1,
+                    "proposal": {"type": "key_combo", "keys": ["ENTER"]},
+                    "validation": {"reason": "keyboard action accepted"},
+                    "approved": True,
+                    "execution": {"ok": True, "route": "keyboard"},
+                    "verification": {"status": "complete", "evidence": "results visible"},
+                    "actor_image_path": ".aria/runs/run/actor-grid.png",
+                    "proposal_debug_image_path": None,
+                }
+            ],
+        },
+    }
+
+    summary = summarize_harness_trace(record)
+
+    assert "status: complete" in summary
+    assert "turns: 1" in summary
+    assert "turn 1: key_combo ['ENTER']" in summary
+    assert "execution: ok via keyboard" in summary
+    assert "verification: complete - results visible" in summary
+    assert "actor image: .aria/runs/run/actor-grid.png" in summary
