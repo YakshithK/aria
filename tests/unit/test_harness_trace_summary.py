@@ -131,6 +131,46 @@ def test_load_harness_trace_reads_first_json_record(tmp_path: Path):
     assert result["result"]["status"] == "complete"
 
 
+def test_load_harness_trace_prefers_task_run_record(tmp_path: Path):
+    path = tmp_path / "mixed_harness.jsonl"
+    path.write_text(
+        '{"mode":"run","result":{"status":"complete","turns":1,"action_trace":[]}}\n'
+        '{"mode":"task_run","goal":"search","result":{"status":"complete","turns":3,"subtask_results":[]}}\n'
+    )
+
+    result = load_harness_trace(path)
+
+    assert result["mode"] == "task_run"
+    assert result["goal"] == "search"
+
+
+def test_load_harness_trace_returns_last_task_run_record(tmp_path: Path):
+    path = tmp_path / "mixed_harness.jsonl"
+    path.write_text(
+        '{"mode":"task_run","goal":"first","result":{"status":"failed","turns":1,"subtask_results":[]}}\n'
+        "\n"
+        '{"mode":"run","result":{"status":"complete","turns":1,"action_trace":[]}}\n'
+        '{"mode":"task_run","goal":"last","result":{"status":"complete","turns":2,"subtask_results":[]}}\n'
+    )
+
+    result = load_harness_trace(path)
+
+    assert result["mode"] == "task_run"
+    assert result["goal"] == "last"
+
+
+def test_load_harness_trace_rejects_non_object_record(tmp_path: Path):
+    path = tmp_path / "invalid_harness.jsonl"
+    path.write_text('{"mode":"run"}\n[]\n')
+
+    try:
+        load_harness_trace(path)
+    except ValueError as exc:
+        assert "JSON object" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
 def test_summarize_harness_trace_lists_turn_actions_and_artifacts():
     record = {
         "mode": "run",
@@ -163,6 +203,50 @@ def test_summarize_harness_trace_lists_turn_actions_and_artifacts():
     assert "execution: ok via keyboard" in summary
     assert "verification: complete - results visible" in summary
     assert "actor image: .aria/runs/run/actor-grid.png" in summary
+
+
+def test_summarize_task_run_lists_subtasks():
+    record = {
+        "mode": "task_run",
+        "goal": "search the web for aria",
+        "result": {
+            "status": "complete",
+            "turns": 3,
+            "message": "task complete",
+            "subtask_results": [
+                {
+                    "title": "Focus search input",
+                    "instruction": "Focus the browser search or address input.",
+                    "result": {
+                        "status": "complete",
+                        "turns": 1,
+                        "trace_path": ".aria/runs/focus.jsonl",
+                    },
+                },
+                {
+                    "title": "Submit search",
+                    "instruction": "Submit the focused search query.",
+                    "result": {
+                        "status": "complete",
+                        "turns": 1,
+                        "trace_path": ".aria/runs/submit.jsonl",
+                    },
+                },
+            ],
+        },
+    }
+
+    summary = summarize_harness_trace(record)
+
+    assert "mode: task_run" in summary
+    assert "goal: search the web for aria" in summary
+    assert "status: complete" in summary
+    assert "turns: 3" in summary
+    assert "message: task complete" in summary
+    assert "subtask 1: Focus search input - complete" in summary
+    assert "trace: .aria/runs/focus.jsonl" in summary
+    assert "subtask 2: Submit search - complete" in summary
+    assert "trace: .aria/runs/submit.jsonl" in summary
 
 
 def test_compact_subtask_summary_lists_status_turns_and_actions():

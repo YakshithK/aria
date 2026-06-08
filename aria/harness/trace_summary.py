@@ -17,17 +17,27 @@ def latest_harness_trace(trace_dir: Path) -> Path:
 
 
 def load_harness_trace(path: Path) -> dict[str, Any]:
+    records = []
     with path.open() as handle:
-        line = handle.readline()
-    if not line:
+        for line in handle:
+            if not line.strip():
+                continue
+            data = json.loads(line)
+            if not isinstance(data, dict):
+                raise ValueError(f"harness trace must contain a JSON object: {path}")
+            records.append(data)
+    if not records:
         raise ValueError(f"empty harness trace: {path}")
-    data = json.loads(line)
-    if not isinstance(data, dict):
-        raise ValueError(f"harness trace must contain a JSON object: {path}")
-    return data
+    for record in reversed(records):
+        if record.get("mode") == "task_run":
+            return record
+    return records[0]
 
 
 def summarize_harness_trace(record: dict[str, Any]) -> str:
+    if record.get("mode") == "task_run":
+        return _summarize_task_run(record)
+
     result = record.get("result") or {}
     lines = [
         f"mode: {record.get('mode')}",
@@ -58,6 +68,25 @@ def summarize_harness_trace(record: dict[str, Any]) -> str:
             lines.append(f"actor image: {turn['actor_image_path']}")
         if turn.get("proposal_debug_image_path"):
             lines.append(f"proposal image: {turn['proposal_debug_image_path']}")
+    return "\n".join(lines)
+
+
+def _summarize_task_run(record: dict[str, Any]) -> str:
+    result = record.get("result") or {}
+    lines = [
+        "mode: task_run",
+        f"goal: {record.get('goal')}",
+        f"status: {result.get('status')}",
+        f"turns: {result.get('turns')}",
+        f"message: {result.get('message')}",
+    ]
+    for index, subtask in enumerate(result.get("subtask_results") or [], start=1):
+        subtask_result = subtask.get("result") or {}
+        lines.append(
+            f"subtask {index}: {subtask.get('title')} - {subtask_result.get('status')}"
+        )
+        if subtask_result.get("trace_path"):
+            lines.append(f"trace: {subtask_result.get('trace_path')}")
     return "\n".join(lines)
 
 
