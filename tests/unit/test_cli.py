@@ -913,6 +913,74 @@ def test_task_preview_plan_calls_helper(monkeypatch):
     assert '"will_execute": false' in result.stdout
 
 
+def test_build_task_preview_plan_payload_writes_trace(monkeypatch, tmp_path):
+    from aria.__main__ import _build_task_preview_plan_payload
+    from aria.harness.config import HarnessConfig, save_harness_config
+    from aria.harness.planner import PlannedSubtask, TaskPlan
+
+    config_path = tmp_path / ".aria" / "config.json"
+    config = HarnessConfig()
+    save_harness_config(config_path, config)
+
+    class FakePlanner:
+        def plan(self, task, *, max_subtasks):
+            assert task == "search the web"
+            assert max_subtasks == config.safety.max_subtasks
+            return TaskPlan(
+                goal=task,
+                subtasks=[
+                    PlannedSubtask(
+                        title="Focus search input",
+                        instruction="Focus the browser search or address input.",
+                        success_condition="A browser search or address input is focused.",
+                    )
+                ],
+            )
+
+    monkeypatch.setattr("aria.__main__.build_completion_client", lambda model_config: object())
+    monkeypatch.setattr("aria.__main__.build_task_planner", lambda client, config: FakePlanner())
+    monkeypatch.setattr("aria.__main__.write_harness_trace", lambda record, trace_dir: tmp_path / "plan.jsonl")
+
+    result = _build_task_preview_plan_payload("search the web", config_path)
+
+    assert result["status"] == "preview_plan"
+    assert result["goal"] == "search the web"
+    assert result["planner_provider"] == config.planner.provider
+    assert result["planner_model"] == config.planner.model
+    assert result["validation"]["ok"] is True
+    assert result["subtasks"][0]["title"] == "Focus search input"
+    assert result["trace_path"] == str(tmp_path / "plan.jsonl")
+    assert result["will_execute"] is False
+
+
+def test_build_task_preview_plan_payload_reports_invalid_plan(monkeypatch, tmp_path):
+    from aria.__main__ import _build_task_preview_plan_payload
+    from aria.harness.config import HarnessConfig, save_harness_config
+    from aria.harness.planner import PlannedSubtask, TaskPlan
+
+    config_path = tmp_path / ".aria" / "config.json"
+    save_harness_config(config_path, HarnessConfig())
+
+    class FakePlanner:
+        def plan(self, task, *, max_subtasks):
+            return TaskPlan(
+                goal=task,
+                subtasks=[
+                    PlannedSubtask(title="Do task", instruction="Do everything", success_condition="done")
+                ],
+            )
+
+    monkeypatch.setattr("aria.__main__.build_completion_client", lambda model_config: object())
+    monkeypatch.setattr("aria.__main__.build_task_planner", lambda client, config: FakePlanner())
+    monkeypatch.setattr("aria.__main__.write_harness_trace", lambda record, trace_dir: tmp_path / "plan.jsonl")
+
+    result = _build_task_preview_plan_payload("search the web", config_path)
+
+    assert result["status"] == "invalid_plan"
+    assert result["validation"]["ok"] is False
+    assert result["will_execute"] is False
+
+
 def test_harness_once_requires_one_mode():
     result = CliRunner().invoke(
         app,

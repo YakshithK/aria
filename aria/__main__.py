@@ -296,7 +296,41 @@ def task_command(
 
 
 def _build_task_preview_plan_payload(task: str, config_path: Path) -> dict[str, object]:
-    raise NotImplementedError("task preview planning is not implemented")
+    if not config_path.exists():
+        raise FileNotFoundError(f"config not found: {config_path}. Run `aria setup` or pass --config.")
+    config = load_harness_config(config_path)
+    client = build_completion_client(config.planner)
+    planner = build_task_planner(client=client, config=config.planner)
+    plan = planner.plan(task, max_subtasks=config.safety.max_subtasks)
+    validation = validate_plan(plan.subtasks, max_subtasks=config.safety.max_subtasks)
+    status = "preview_plan" if validation.ok else "invalid_plan"
+    subtasks = [subtask.model_dump() for subtask in plan.subtasks]
+    record = {
+        "mode": "preview_plan",
+        "goal": task,
+        "planner_provider": config.planner.provider,
+        "planner_model": config.planner.model,
+        "result": {
+            "status": status,
+            "turns": 0,
+            "message": validation.reason,
+            "action_trace": [],
+        },
+        "validation": validation.model_dump(),
+        "subtasks": subtasks,
+        "will_execute": False,
+    }
+    trace_path = write_harness_trace(record, trace_dir=config.trace.output_dir)
+    return {
+        "status": status,
+        "goal": task,
+        "planner_provider": config.planner.provider,
+        "planner_model": config.planner.model,
+        "validation": validation.model_dump(),
+        "subtasks": subtasks,
+        "trace_path": str(trace_path),
+        "will_execute": False,
+    }
 
 
 @app.command()
