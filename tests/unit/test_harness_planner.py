@@ -157,6 +157,65 @@ def test_validate_plan_accepts_observable_steps():
     assert result.reason == "plan accepted"
 
 
+def test_validate_plan_rejects_search_plan_that_only_focuses_input():
+    plan = [
+        PlannedSubtask(
+            title="Focus search input",
+            instruction="Focus the browser search or address input.",
+            success_condition="A browser search or address input is focused.",
+        )
+    ]
+
+    result = validate_plan(plan, goal="search the web for aria")
+
+    assert result.ok is False
+    assert "search query" in result.reason
+
+
+def test_validate_plan_rejects_search_plan_that_never_submits_query():
+    plan = [
+        PlannedSubtask(
+            title="Focus search input",
+            instruction="Focus the browser search or address input.",
+            success_condition="A browser search or address input is focused.",
+        ),
+        PlannedSubtask(
+            title="Type query",
+            instruction="Type aria into the focused search input.",
+            success_condition="The focused search input contains aria.",
+        ),
+    ]
+
+    result = validate_plan(plan, goal="search the web for aria")
+
+    assert result.ok is False
+    assert "submit" in result.reason
+
+
+def test_validate_plan_accepts_complete_search_plan():
+    plan = [
+        PlannedSubtask(
+            title="Focus search input",
+            instruction="Focus the browser search or address input.",
+            success_condition="A browser search or address input is focused.",
+        ),
+        PlannedSubtask(
+            title="Type query",
+            instruction="Type aria into the focused search input.",
+            success_condition="The focused search input contains aria.",
+        ),
+        PlannedSubtask(
+            title="Submit search",
+            instruction="Submit the focused search query.",
+            success_condition="Search results for aria are visible.",
+        ),
+    ]
+
+    result = validate_plan(plan, goal="search the web for aria")
+
+    assert result.ok is True
+
+
 def test_build_planner_messages_requires_json_and_observable_subtasks():
     messages = build_planner_messages("search the web for aria", max_subtasks=3)
 
@@ -166,6 +225,8 @@ def test_build_planner_messages_requires_json_and_observable_subtasks():
     assert "observable success_condition" in text
     assert "Do not execute" in text
     assert "max 3 subtasks" in text
+    assert "cover the full user task" in text
+    assert "Submit search" in text
 
 
 def test_json_task_planner_parses_valid_plan_and_uses_model():
@@ -184,9 +245,9 @@ def test_json_task_planner_parses_valid_plan_and_uses_model():
     )
     planner = JsonTaskPlanner(client=client, model="planner-model")
 
-    result = planner.plan("search the web for aria", max_subtasks=3)
+    result = planner.plan("focus the browser search input", max_subtasks=3)
 
-    assert result.goal == "search the web for aria"
+    assert result.goal == "focus the browser search input"
     assert result.subtasks[0].title == "Focus search input"
     assert client.calls[0]["model"] == "planner-model"
     assert client.calls[0]["temperature"] == 0
@@ -246,7 +307,7 @@ def test_json_task_planner_repairs_malformed_plan_response():
     )
     planner = JsonTaskPlanner(client=client, model="planner-model")
 
-    result = planner.plan("search the web for aria", max_subtasks=3)
+    result = planner.plan("focus the browser search input", max_subtasks=3)
 
     assert len(client.calls) == 2
     assert result.subtasks[0].title == "Focus search input"
@@ -265,12 +326,63 @@ def test_json_task_planner_normalizes_extra_trailing_brace_and_missing_success()
     )
     planner = JsonTaskPlanner(client=client, model="planner-model")
 
-    result = planner.plan("search the web for aria", max_subtasks=3)
+    result = planner.plan("focus the browser search input", max_subtasks=3)
 
     assert len(client.calls) == 1
     assert result.subtasks[0].title == "Focus search input"
     assert result.subtasks[0].success_condition == "Focus search input is visible."
     assert planner.last_error is None
+
+
+def test_json_task_planner_repairs_incomplete_search_plan():
+    client = SequenceClient(
+        [
+            json.dumps(
+                {
+                    "subtasks": [
+                        {
+                            "title": "Focus search input",
+                            "instruction": "Focus the browser search or address input.",
+                            "success_condition": "A browser search or address input is focused.",
+                        }
+                    ]
+                }
+            ),
+            json.dumps(
+                {
+                    "subtasks": [
+                        {
+                            "title": "Focus search input",
+                            "instruction": "Focus the browser search or address input.",
+                            "success_condition": "A browser search or address input is focused.",
+                        },
+                        {
+                            "title": "Type query",
+                            "instruction": "Type aria into the focused search input.",
+                            "success_condition": "The focused search input contains aria.",
+                        },
+                        {
+                            "title": "Submit search",
+                            "instruction": "Submit the focused search query.",
+                            "success_condition": "Search results for aria are visible.",
+                        },
+                    ]
+                }
+            ),
+        ]
+    )
+    planner = JsonTaskPlanner(client=client, model="planner-model")
+
+    result = planner.plan("search the web for aria", max_subtasks=8)
+
+    assert len(client.calls) == 2
+    assert [subtask.title for subtask in result.subtasks] == [
+        "Focus search input",
+        "Type query",
+        "Submit search",
+    ]
+    repair_messages = str(client.calls[1]["messages"])
+    assert "does not cover the full user task" in repair_messages
 
 
 def test_json_task_planner_returns_empty_plan_when_repair_fails():

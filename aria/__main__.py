@@ -317,7 +317,7 @@ def _build_task_preview_plan_payload(task: str, config_path: Path) -> dict[str, 
     client = build_completion_client(config.planner)
     planner = build_task_planner(client=client, config=config.planner)
     plan = planner.plan(task, max_subtasks=config.safety.max_subtasks)
-    validation = validate_plan(plan.subtasks, max_subtasks=config.safety.max_subtasks)
+    validation = validate_plan(plan.subtasks, goal=task, max_subtasks=config.safety.max_subtasks)
     status = "preview_plan" if validation.ok else "invalid_plan"
     subtasks = [subtask.model_dump() for subtask in plan.subtasks]
     planner_error = getattr(planner, "last_error", None)
@@ -367,7 +367,7 @@ def _build_task_run_payload(
     client = build_completion_client(config.planner)
     planner = build_task_planner(client=client, config=config.planner)
     plan = planner.plan(task, max_subtasks=config.safety.max_subtasks)
-    validation = validate_plan(plan.subtasks, max_subtasks=config.safety.max_subtasks)
+    validation = validate_plan(plan.subtasks, goal=task, max_subtasks=config.safety.max_subtasks)
     subtasks = [subtask.model_dump() for subtask in plan.subtasks]
     planner_error = getattr(planner, "last_error", None)
     planner_response_content = getattr(planner, "last_response_content", None)

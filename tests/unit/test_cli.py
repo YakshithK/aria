@@ -1060,6 +1060,11 @@ def test_build_task_run_payload_executes_valid_plan(monkeypatch, tmp_path):
                         instruction="Type aria into the focused search input.",
                         success_condition="The focused search input contains aria.",
                     ),
+                    PlannedSubtask(
+                        title="Submit search",
+                        instruction="Submit the focused search query.",
+                        success_condition="Search results for aria are visible.",
+                    ),
                 ],
             )
 
@@ -1090,9 +1095,10 @@ def test_build_task_run_payload_executes_valid_plan(monkeypatch, tmp_path):
 
     assert result["status"] == "complete"
     assert result["subtasks"][0]["title"] == "Focus search input"
-    assert len(result["subtask_results"]) == 2
+    assert len(result["subtask_results"]) == 3
     assert calls[0][1] == "Focus the browser search or address input."
     assert calls[1][1] == "Type aria into the focused search input."
+    assert calls[2][1] == "Submit the focused search query."
     assert result["trace_path"] == str(tmp_path / "task.jsonl")
 
 
@@ -1121,6 +1127,11 @@ def test_build_task_run_payload_stops_on_failed_subtask(monkeypatch, tmp_path):
                         title="Type query",
                         instruction="Type aria into the focused search input.",
                         success_condition="The focused search input contains aria.",
+                    ),
+                    PlannedSubtask(
+                        title="Submit search",
+                        instruction="Submit the focused search query.",
+                        success_condition="Search results for aria are visible.",
                     ),
                 ],
             )

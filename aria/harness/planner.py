@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Protocol
 
 from pydantic import BaseModel
@@ -12,6 +13,7 @@ PLANNER_SYSTEM_PROMPT = """You decompose desktop automation tasks into small obs
 
 Return exactly one JSON object. Do not return prose.
 Do not execute actions.
+The plan must cover the full user task, not only the first UI preparation step.
 Each subtask must be small enough for a one-action-at-a-time desktop harness.
 Each subtask must have an observable success_condition that can be checked from a screenshot.
 Avoid vague subtasks like "do the task" or "finish everything".
@@ -46,6 +48,7 @@ def build_planner_messages(task: str, *, max_subtasks: int) -> list[dict[str, An
         "task": task,
         "constraints": [
             f"Use max {max_subtasks} subtasks.",
+            "The subtasks must cover the full user task through its final observable outcome.",
             "Each instruction should be one action-sized step.",
             "Each success_condition must be visually observable.",
             "Do not execute anything.",
@@ -56,6 +59,16 @@ def build_planner_messages(task: str, *, max_subtasks: int) -> list[dict[str, An
                     "title": "Focus search input",
                     "instruction": "Focus the browser search or address input.",
                     "success_condition": "A browser search or address input is focused.",
+                },
+                {
+                    "title": "Type query",
+                    "instruction": "Type aria into the focused search input.",
+                    "success_condition": "The focused search input contains aria.",
+                },
+                {
+                    "title": "Submit search",
+                    "instruction": "Submit the focused search query.",
+                    "success_condition": "Search results for aria are visible.",
                 }
             ]
         },
@@ -91,25 +104,23 @@ class JsonTaskPlanner:
                 messages=messages,
                 temperature=0,
             )
-            return self._plan_from_response(task, response)
-        except Exception as exc:
-            initial_error = f"planner JSON error: {exc}"
-            try:
-                repair_response = self.client.create_completion(
-                    model=self.model,
-                    messages=_planner_repair_messages(
-                        messages,
-                        previous_content=self.last_response_content,
-                        reason=initial_error,
-                    ),
-                    temperature=0,
-                )
-                plan = self._plan_from_response(task, repair_response)
-                self.last_error = None
+            plan = self._plan_from_response(task, response)
+            validation = validate_plan(plan.subtasks, goal=task, max_subtasks=max_subtasks)
+            if validation.ok:
                 return plan
-            except Exception as repair_exc:
-                self.last_error = f"planner JSON error after repair: {repair_exc}"
-                return TaskPlan(goal=task, subtasks=[])
+            return self._repair_plan(
+                task,
+                max_subtasks=max_subtasks,
+                messages=messages,
+                reason=f"planner plan does not cover the full user task: {validation.reason}",
+            )
+        except Exception as exc:
+            return self._repair_plan(
+                task,
+                max_subtasks=max_subtasks,
+                messages=messages,
+                reason=f"planner JSON error: {exc}",
+            )
 
     def _plan_from_response(self, task: str, response: Any) -> TaskPlan:
         content = _response_content(response)
@@ -120,6 +131,34 @@ class JsonTaskPlanner:
             raise ValueError("planner subtasks must be a list")
         subtasks = [PlannedSubtask(**_normalize_subtask_item(item)) for item in items]
         return TaskPlan(goal=task, subtasks=subtasks)
+
+    def _repair_plan(
+        self,
+        task: str,
+        *,
+        max_subtasks: int,
+        messages: list[dict[str, Any]],
+        reason: str,
+    ) -> TaskPlan:
+        try:
+            repair_response = self.client.create_completion(
+                model=self.model,
+                messages=_planner_repair_messages(
+                    messages,
+                    previous_content=self.last_response_content,
+                    reason=reason,
+                ),
+                temperature=0,
+            )
+            plan = self._plan_from_response(task, repair_response)
+            validation = validate_plan(plan.subtasks, goal=task, max_subtasks=max_subtasks)
+            if not validation.ok:
+                raise ValueError(validation.reason)
+            self.last_error = None
+            return plan
+        except Exception as repair_exc:
+            self.last_error = f"planner JSON error after repair: {repair_exc}"
+            return TaskPlan(goal=task, subtasks=[])
 
 
 def _planner_repair_messages(
@@ -133,7 +172,8 @@ def _planner_repair_messages(
         "instruction": (
             "Repair your previous response. Return exactly one valid JSON object "
             "with a subtasks array. Every subtask must include title, instruction, "
-            "and success_condition string fields. Do not include prose."
+            "and success_condition string fields. The repaired plan must cover the "
+            "full user task through its final observable outcome. Do not include prose."
         ),
         "required_json_shape": {
             "subtasks": [
@@ -171,6 +211,7 @@ def validate_plan(
     plan: list[PlannedSubtask],
     *,
     max_subtasks: int = 8,
+    goal: str | None = None,
 ) -> PlanValidation:
     if not plan:
         return _reject("empty plan")
@@ -180,6 +221,10 @@ def validate_plan(
         reason = _subtask_error(subtask)
         if reason is not None:
             return _reject(reason, invalid_index=index)
+    if goal:
+        coverage_error = _task_coverage_error(goal, plan)
+        if coverage_error is not None:
+            return _reject(coverage_error)
     return PlanValidation(ok=True, reason="plan accepted", invalid_index=None)
 
 
@@ -219,6 +264,51 @@ def _success_condition_is_not_observable(success_condition: str) -> bool:
 
     vague_words = [word for word in words if word in _NON_OBSERVABLE_SUCCESS]
     return len(vague_words) / len(words) >= 0.75
+
+
+def _task_coverage_error(goal: str, plan: list[PlannedSubtask]) -> str | None:
+    search_query = _extract_web_search_query(goal)
+    if search_query is None:
+        return None
+
+    query = search_query.lower()
+    if not query:
+        return None
+
+    subtask_texts = [
+        f"{subtask.title} {subtask.instruction} {subtask.success_condition}".lower()
+        for subtask in plan
+    ]
+    has_query_entry = any(
+        query in text and any(verb in text for verb in ("type", "enter", "write", "input"))
+        for text in subtask_texts
+    )
+    if not has_query_entry:
+        return "search plan does not type the search query"
+
+    has_submit_or_results = any(
+        query in text
+        and any(term in text for term in ("submit", "press enter", "search results", "results"))
+        for text in subtask_texts
+    )
+    if not has_submit_or_results:
+        return "search plan does not submit the search query or observe results"
+
+    return None
+
+
+def _extract_web_search_query(goal: str) -> str | None:
+    normalized = " ".join(goal.strip().split())
+    patterns = (
+        r"^search\s+the\s+web\s+for\s+(.+)$",
+        r"^search\s+for\s+(.+)$",
+        r"^google\s+(.+)$",
+    )
+    for pattern in patterns:
+        match = re.match(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip().strip("\"'")
+    return None
 
 
 def _reject(reason: str, *, invalid_index: int | None = None) -> PlanValidation:
