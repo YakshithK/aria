@@ -1,4 +1,38 @@
-from aria.harness.planner import PlannedSubtask, validate_plan
+import json
+
+from aria.harness.config import ModelConfig
+from aria.harness.planner import (
+    JsonTaskPlanner,
+    PlannedSubtask,
+    build_planner_messages,
+    build_task_planner,
+    validate_plan,
+)
+
+
+class Message:
+    def __init__(self, content: str):
+        self.content = content
+
+
+class Choice:
+    def __init__(self, content: str):
+        self.message = Message(content)
+
+
+class Response:
+    def __init__(self, content: str):
+        self.choices = [Choice(content)]
+
+
+class FakeClient:
+    def __init__(self, content: str):
+        self.content = content
+        self.calls = []
+
+    def create_completion(self, **kwargs):
+        self.calls.append(kwargs)
+        return Response(self.content)
 
 
 def test_validate_plan_rejects_empty_plan():
@@ -110,3 +144,71 @@ def test_validate_plan_accepts_observable_steps():
 
     assert result.ok is True
     assert result.reason == "plan accepted"
+
+
+def test_build_planner_messages_requires_json_and_observable_subtasks():
+    messages = build_planner_messages("search the web for aria", max_subtasks=3)
+
+    text = str(messages)
+    assert "Return exactly one JSON object" in text
+    assert "subtasks" in text
+    assert "observable success_condition" in text
+    assert "Do not execute" in text
+    assert "max 3 subtasks" in text
+
+
+def test_json_task_planner_parses_valid_plan_and_uses_model():
+    client = FakeClient(
+        json.dumps(
+            {
+                "subtasks": [
+                    {
+                        "title": "Focus search input",
+                        "instruction": "Focus the browser search or address input.",
+                        "success_condition": "A browser search or address input is focused.",
+                    }
+                ]
+            }
+        )
+    )
+    planner = JsonTaskPlanner(client=client, model="planner-model")
+
+    result = planner.plan("search the web for aria", max_subtasks=3)
+
+    assert result.goal == "search the web for aria"
+    assert result.subtasks[0].title == "Focus search input"
+    assert client.calls[0]["model"] == "planner-model"
+    assert client.calls[0]["temperature"] == 0
+
+
+def test_build_task_planner_uses_configured_model():
+    client = FakeClient(
+        json.dumps(
+            {
+                "subtasks": [
+                    {
+                        "title": "Focus search input",
+                        "instruction": "Focus the browser search or address input.",
+                        "success_condition": "A browser search or address input is focused.",
+                    }
+                ]
+            }
+        )
+    )
+    planner = build_task_planner(
+        client=client,
+        config=ModelConfig(provider="hackclub", model="planner-model"),
+    )
+
+    planner.plan("search", max_subtasks=2)
+
+    assert client.calls[0]["model"] == "planner-model"
+
+
+def test_json_task_planner_returns_empty_plan_for_malformed_response():
+    planner = JsonTaskPlanner(client=FakeClient("not json"), model="planner-model")
+
+    result = planner.plan("search", max_subtasks=3)
+
+    assert result.goal == "search"
+    assert result.subtasks == []
