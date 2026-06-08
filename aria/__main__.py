@@ -33,7 +33,13 @@ from aria.harness.provider import build_completion_client
 from aria.harness.runner import preview_turn, run_approved_turn, run_subtask
 from aria.harness.semantic import LocalSemanticExecutor, SemanticHarnessObserver, SemanticObserverAdapter
 from aria.harness.trace import write_harness_trace
-from aria.harness.trace_summary import summarize_approved_turn, summarize_subtask_result
+from aria.harness.trace_summary import (
+    latest_harness_trace,
+    load_harness_trace,
+    summarize_approved_turn,
+    summarize_harness_trace,
+    summarize_subtask_result,
+)
 from aria.harness.visual_debug import VisualDebugger
 from aria.harness.vlm import build_json_vlm_actor, build_json_vlm_verifier
 from aria.launcher import (
@@ -43,6 +49,8 @@ from aria.planner import OllamaPlanner
 from aria.tray import TrayApp
 
 app = typer.Typer(help="CUA Windows semantic computer-use agent.")
+trace_app = typer.Typer(help="Inspect local harness traces.")
+app.add_typer(trace_app, name="trace")
 console = Console()
 DAEMON_URL = "http://127.0.0.1:7823"
 
@@ -144,6 +152,33 @@ def doctor(
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from exc
     _print_json(result)
+
+
+@trace_app.command("latest")
+def trace_latest(
+    trace_dir: Path = typer.Option(Path(".aria/runs"), "--trace-dir", help="Harness trace directory."),
+) -> None:
+    """Print a readable summary of the newest harness trace."""
+    try:
+        path = latest_harness_trace(trace_dir)
+        record = load_harness_trace(path)
+    except Exception as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    console.print(f"trace: {path}", soft_wrap=True)
+    console.print(summarize_harness_trace(record))
+
+
+@trace_app.command("show")
+def trace_show(path: Path) -> None:
+    """Print a readable summary of a harness trace."""
+    try:
+        record = load_harness_trace(path)
+    except Exception as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    console.print(f"trace: {path}", soft_wrap=True)
+    console.print(summarize_harness_trace(record))
 
 
 @app.command()

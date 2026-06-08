@@ -804,6 +804,42 @@ def test_harness_once_start_delay_can_be_disabled(monkeypatch):
     assert sleeps == []
 
 
+def test_trace_latest_prints_latest_trace_summary(monkeypatch, tmp_path):
+    trace_path = tmp_path / "20260608-020000_harness.jsonl"
+
+    monkeypatch.setattr("aria.__main__.latest_harness_trace", lambda trace_dir: trace_path)
+    monkeypatch.setattr(
+        "aria.__main__.load_harness_trace",
+        lambda path: {"mode": "run", "result": {"status": "complete"}},
+    )
+    monkeypatch.setattr("aria.__main__.summarize_harness_trace", lambda record: "status: complete")
+
+    result = CliRunner().invoke(app, ["trace", "latest", "--trace-dir", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert "trace: " in result.stdout
+    assert str(trace_path) in result.stdout
+    assert "status: complete" in result.stdout
+
+
+def test_trace_show_prints_explicit_trace_summary(monkeypatch, tmp_path):
+    trace_path = tmp_path / "run_harness.jsonl"
+    trace_path.write_text("{}\n")
+
+    monkeypatch.setattr(
+        "aria.__main__.load_harness_trace",
+        lambda path: {"mode": "run", "result": {"status": "failed"}},
+    )
+    monkeypatch.setattr("aria.__main__.summarize_harness_trace", lambda record: "status: failed")
+
+    result = CliRunner().invoke(app, ["trace", "show", str(trace_path)])
+
+    assert result.exit_code == 0
+    assert "trace: " in result.stdout
+    assert str(trace_path) in result.stdout
+    assert "status: failed" in result.stdout
+
+
 def test_harness_once_requires_one_mode():
     result = CliRunner().invoke(
         app,
