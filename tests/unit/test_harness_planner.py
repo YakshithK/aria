@@ -35,6 +35,17 @@ class FakeClient:
         return Response(self.content)
 
 
+class SequenceClient:
+    def __init__(self, contents: list[str]):
+        self.contents = contents
+        self.calls = []
+
+    def create_completion(self, **kwargs):
+        self.calls.append(kwargs)
+        index = min(len(self.calls) - 1, len(self.contents) - 1)
+        return Response(self.contents[index])
+
+
 def test_validate_plan_rejects_empty_plan():
     result = validate_plan([])
 
@@ -212,6 +223,52 @@ def test_json_task_planner_returns_empty_plan_for_malformed_response():
 
     assert result.goal == "search"
     assert result.subtasks == []
+
+
+def test_json_task_planner_repairs_malformed_plan_response():
+    client = SequenceClient(
+        [
+            (
+                '{"subtasks": [{"title": "Focus search input", '
+                '"instruction": "Click the browser search input."}]}}'
+            ),
+            json.dumps(
+                {
+                    "subtasks": [
+                        {
+                            "title": "Focus search input",
+                            "instruction": "Focus the browser search or address input.",
+                            "success_condition": (
+                                "A browser search or address input is focused."
+                            ),
+                        }
+                    ]
+                }
+            ),
+        ]
+    )
+    planner = JsonTaskPlanner(client=client, model="planner-model")
+
+    result = planner.plan("search the web for aria", max_subtasks=3)
+
+    assert len(client.calls) == 2
+    assert result.subtasks[0].title == "Focus search input"
+    assert planner.last_error is None
+    repair_messages = str(client.calls[1]["messages"])
+    assert "valid JSON" in repair_messages
+    assert "success_condition" in repair_messages
+
+
+def test_json_task_planner_returns_empty_plan_when_repair_fails():
+    client = SequenceClient(["not json", '{"subtasks": "still wrong"}'])
+    planner = JsonTaskPlanner(client=client, model="planner-model")
+
+    result = planner.plan("search", max_subtasks=3)
+
+    assert len(client.calls) == 2
+    assert result.subtasks == []
+    assert planner.last_error is not None
+    assert "after repair" in planner.last_error
 
 
 def test_json_task_planner_records_failure_diagnostics_for_malformed_response():

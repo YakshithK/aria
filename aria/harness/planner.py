@@ -84,24 +84,72 @@ class JsonTaskPlanner:
     def plan(self, task: str, *, max_subtasks: int) -> TaskPlan:
         self.last_error = None
         self.last_response_content = None
-        response: Any | None = None
+        messages = build_planner_messages(task, max_subtasks=max_subtasks)
         try:
             response = self.client.create_completion(
                 model=self.model,
-                messages=build_planner_messages(task, max_subtasks=max_subtasks),
+                messages=messages,
                 temperature=0,
             )
-            content = _response_content(response)
-            self.last_response_content = content if isinstance(content, str) else None
-            data = _json_from_response(response)
-            subtasks = [PlannedSubtask(**item) for item in data.get("subtasks", [])]
-            return TaskPlan(goal=task, subtasks=subtasks)
+            return self._plan_from_response(task, response)
         except Exception as exc:
-            if self.last_response_content is None and response is not None:
-                content = _response_content(response)
-                self.last_response_content = content if isinstance(content, str) else None
-            self.last_error = f"planner JSON error: {exc}"
-            return TaskPlan(goal=task, subtasks=[])
+            initial_error = f"planner JSON error: {exc}"
+            try:
+                repair_response = self.client.create_completion(
+                    model=self.model,
+                    messages=_planner_repair_messages(
+                        messages,
+                        previous_content=self.last_response_content,
+                        reason=initial_error,
+                    ),
+                    temperature=0,
+                )
+                plan = self._plan_from_response(task, repair_response)
+                self.last_error = None
+                return plan
+            except Exception as repair_exc:
+                self.last_error = f"planner JSON error after repair: {repair_exc}"
+                return TaskPlan(goal=task, subtasks=[])
+
+    def _plan_from_response(self, task: str, response: Any) -> TaskPlan:
+        content = _response_content(response)
+        self.last_response_content = content if isinstance(content, str) else None
+        data = _json_from_response(response)
+        items = data.get("subtasks", [])
+        if not isinstance(items, list):
+            raise ValueError("planner subtasks must be a list")
+        subtasks = [PlannedSubtask(**item) for item in items]
+        return TaskPlan(goal=task, subtasks=subtasks)
+
+
+def _planner_repair_messages(
+    messages: list[dict[str, Any]],
+    *,
+    previous_content: str | None,
+    reason: str,
+) -> list[dict[str, Any]]:
+    repair_request = {
+        "error": reason,
+        "instruction": (
+            "Repair your previous response. Return exactly one valid JSON object "
+            "with a subtasks array. Every subtask must include title, instruction, "
+            "and success_condition string fields. Do not include prose."
+        ),
+        "required_json_shape": {
+            "subtasks": [
+                {
+                    "title": "Focus search input",
+                    "instruction": "Focus the browser search or address input.",
+                    "success_condition": "A browser search or address input is focused.",
+                }
+            ]
+        },
+    }
+    return [
+        *messages,
+        {"role": "assistant", "content": previous_content or ""},
+        {"role": "user", "content": json.dumps(repair_request, ensure_ascii=True)},
+    ]
 
 
 _VAGUE_TERMS = {
