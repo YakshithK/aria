@@ -873,6 +873,46 @@ def test_trace_show_prints_explicit_trace_summary(monkeypatch, tmp_path):
     assert "status: failed" in result.stdout
 
 
+def test_task_command_requires_preview_plan():
+    result = CliRunner().invoke(app, ["task", "search the web"])
+
+    assert result.exit_code == 1
+    assert "Choose --preview-plan" in result.stdout
+
+
+def test_task_preview_plan_calls_helper(monkeypatch):
+    calls = []
+
+    def fake_preview(task, config_path):
+        calls.append((task, str(config_path)))
+        return {
+            "status": "preview_plan",
+            "goal": task,
+            "validation": {"ok": True, "reason": "plan accepted", "invalid_index": None},
+            "subtasks": [],
+            "trace_path": "/tmp/trace.jsonl",
+            "will_execute": False,
+        }
+
+    monkeypatch.setattr("aria.__main__._build_task_preview_plan_payload", fake_preview)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "task",
+            "search the web",
+            "--preview-plan",
+            "--config",
+            ".aria/config.json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [("search the web", ".aria/config.json")]
+    assert '"status": "preview_plan"' in result.stdout
+    assert '"will_execute": false' in result.stdout
+
+
 def test_harness_once_requires_one_mode():
     result = CliRunner().invoke(
         app,

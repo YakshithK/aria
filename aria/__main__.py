@@ -29,6 +29,7 @@ from aria.harness.doctor import run_harness_doctor
 from aria.harness.execute import HarnessExecutor
 from aria.harness.observe import PillowScreenshotCapture, build_observation_bundle
 from aria.harness.pixel import WindowsPixelExecutor
+from aria.harness.planner import build_task_planner, validate_plan
 from aria.harness.provider import build_completion_client
 from aria.harness.runner import preview_turn, run_approved_turn, run_subtask
 from aria.harness.semantic import LocalSemanticExecutor, SemanticHarnessObserver, SemanticObserverAdapter
@@ -274,6 +275,28 @@ def _sleep_before_harness_capture(seconds: float) -> None:
     if seconds <= 0:
         return
     time.sleep(seconds)
+
+
+@app.command("task")
+def task_command(
+    task: str,
+    preview_plan: bool = typer.Option(False, "--preview-plan", help="Plan the task without executing it."),
+    config_path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", help="Harness config path."),
+) -> None:
+    """Plan a full user task."""
+    if not preview_plan:
+        console.print("[red]Error:[/red] Choose --preview-plan.")
+        raise typer.Exit(1)
+    try:
+        result = _build_task_preview_plan_payload(task, config_path)
+    except Exception as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    _print_json(result)
+
+
+def _build_task_preview_plan_payload(task: str, config_path: Path) -> dict[str, object]:
+    raise NotImplementedError("task preview planning is not implemented")
 
 
 @app.command()
