@@ -2,6 +2,7 @@ from pathlib import Path
 
 from aria.harness.models import HarnessResult, VerificationResult
 from aria.harness.trace_summary import (
+    compact_subtask_summary,
     latest_harness_trace,
     load_harness_trace,
     summarize_approved_turn,
@@ -162,3 +163,20 @@ def test_summarize_harness_trace_lists_turn_actions_and_artifacts():
     assert "execution: ok via keyboard" in summary
     assert "verification: complete - results visible" in summary
     assert "actor image: .aria/runs/run/actor-grid.png" in summary
+
+
+def test_compact_subtask_summary_lists_status_turns_and_actions():
+    result = HarnessResult(
+        status="complete",
+        turns=2,
+        message="results visible",
+        verification=VerificationResult(status="complete", confidence=0.9, evidence="results visible"),
+        action_trace=[
+            {"turn": 1, "proposal": {"type": "click", "x": 10, "y": 20}},
+            {"turn": 2, "proposal": {"type": "key_combo", "keys": ["ENTER"]}},
+        ],
+    )
+
+    summary = compact_subtask_summary(result)
+
+    assert summary == "complete in 2 turns: click (10, 20) -> key_combo ['ENTER']"

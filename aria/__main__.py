@@ -34,6 +34,7 @@ from aria.harness.runner import preview_turn, run_approved_turn, run_subtask
 from aria.harness.semantic import LocalSemanticExecutor, SemanticHarnessObserver, SemanticObserverAdapter
 from aria.harness.trace import write_harness_trace
 from aria.harness.trace_summary import (
+    compact_subtask_summary,
     latest_harness_trace,
     load_harness_trace,
     summarize_approved_turn,
@@ -543,6 +544,7 @@ def _build_harness_run_payload(
         "verifier_model": config.verifier.model,
         "trace_path": str(trace_path),
         "summary": summarize_subtask_result(result),
+        "compact_summary": compact_subtask_summary(result),
         "will_execute": False,
     }
 

@@ -72,6 +72,18 @@ def _proposal_label(proposal: dict[str, Any]) -> str:
     return str(action_type)
 
 
+def compact_subtask_summary(result: Any) -> str:
+    payload = result.model_dump() if hasattr(result, "model_dump") else dict(result)
+    turns = payload.get("turns")
+    turn_word = "turn" if turns == 1 else "turns"
+    actions = [
+        _proposal_label(record.get("proposal") or {})
+        for record in payload.get("action_trace") or []
+    ]
+    action_text = " -> ".join(actions) if actions else "no actions"
+    return f"{payload.get('status')} in {turns} {turn_word}: {action_text}"
+
+
 def summarize_approved_turn(record: dict[str, Any]) -> str:
     proposal = record.get("proposal") or {}
     validation = record.get("validation") or {}

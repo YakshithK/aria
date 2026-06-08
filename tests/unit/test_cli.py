@@ -727,6 +727,39 @@ def test_harness_once_run_calls_subtask_helper(monkeypatch):
     assert '"trace_path": "/tmp/trace.jsonl"' in result.stdout
 
 
+def test_harness_once_run_output_includes_compact_summary(monkeypatch):
+    def fake_run(goal, subtask, success_condition, apps, config_path, approve):
+        return {
+            "status": "complete",
+            "turns": 1,
+            "trace_path": "/tmp/trace.jsonl",
+            "summary": "status: complete",
+            "compact_summary": "complete in 1 turn: key_combo ['ENTER']",
+            "will_execute": False,
+        }
+
+    monkeypatch.setattr("aria.__main__._build_harness_run_payload", fake_run)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "harness-once",
+            "--goal",
+            "search",
+            "--subtask",
+            "submit query",
+            "--success",
+            "results visible",
+            "--run",
+            "--start-delay",
+            "0",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert '"compact_summary": "complete in 1 turn: key_combo [\'ENTER\']"' in result.stdout
+
+
 def test_harness_once_waits_before_capture_by_default(monkeypatch):
     events = []
 
