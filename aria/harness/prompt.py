@@ -19,6 +19,7 @@ coordinates, scroll, wait, or fail.
 The screenshot may include a coordinate grid. Use the grid labels to estimate x/y.
 For raw click actions, choose the center of the visible target, not the label edge or surrounding chrome.
 Avoid browser toolbar/chrome unless the subtask explicitly asks for browser controls.
+When the subtask asks to submit a focused input or focused search query, prefer {"type":"key_combo","keys":["ENTER"],"confidence":0.8,"evidence":"..."} over clicking a search button.
 Never assume hidden state that is not represented by the current candidate list or task context.
 Do not complete multiple steps in one response.
 If the target is not visible, choose scroll, wait, or fail.

@@ -66,6 +66,18 @@ def test_actor_prompt_mentions_coordinate_grid():
     assert "center of the visible target" in text.lower()
 
 
+def test_actor_prompt_prefers_enter_for_focused_submit_tasks():
+    messages = build_actor_messages(bundle())
+
+    system_text = messages[0]["content"]
+
+    assert "When the subtask asks to submit a focused input or focused search query" in system_text
+    assert (
+        '{"type":"key_combo","keys":["ENTER"],"confidence":0.8,"evidence":"..."}'
+        in system_text
+    )
+
+
 def test_verifier_prompt_contains_before_after_and_success_condition():
     messages = build_verifier_messages(
         before=bundle(),
