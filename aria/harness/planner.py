@@ -118,7 +118,7 @@ class JsonTaskPlanner:
         items = data.get("subtasks", [])
         if not isinstance(items, list):
             raise ValueError("planner subtasks must be a list")
-        subtasks = [PlannedSubtask(**item) for item in items]
+        subtasks = [PlannedSubtask(**_normalize_subtask_item(item)) for item in items]
         return TaskPlan(goal=task, subtasks=subtasks)
 
 
@@ -229,10 +229,37 @@ def _json_from_response(response: Any) -> dict[str, Any]:
     content = _response_content(response)
     if not isinstance(content, str):
         raise ValueError("planner response content must be a JSON string")
-    data = json.loads(content)
+    data = _loads_json_object(content)
     if not isinstance(data, dict):
         raise ValueError("planner response must decode to a JSON object")
     return data
+
+
+def _loads_json_object(content: str) -> Any:
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as exc:
+        decoder = json.JSONDecoder()
+        try:
+            data, end_index = decoder.raw_decode(content)
+        except json.JSONDecodeError:
+            raise exc
+
+        trailing = content[end_index:].strip()
+        if trailing and set(trailing) <= {"}", "]"}:
+            return data
+        raise exc
+
+
+def _normalize_subtask_item(item: Any) -> dict[str, Any]:
+    if not isinstance(item, dict):
+        raise ValueError("planner subtask must be a JSON object")
+
+    normalized = dict(item)
+    if not normalized.get("success_condition"):
+        title = str(normalized.get("title") or "Subtask").strip() or "Subtask"
+        normalized["success_condition"] = f"{title} is visible."
+    return normalized
 
 
 def _response_content(response: Any) -> Any:

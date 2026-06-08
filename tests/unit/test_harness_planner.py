@@ -228,10 +228,7 @@ def test_json_task_planner_returns_empty_plan_for_malformed_response():
 def test_json_task_planner_repairs_malformed_plan_response():
     client = SequenceClient(
         [
-            (
-                '{"subtasks": [{"title": "Focus search input", '
-                '"instruction": "Click the browser search input."}]}}'
-            ),
+            "not json",
             json.dumps(
                 {
                     "subtasks": [
@@ -257,6 +254,23 @@ def test_json_task_planner_repairs_malformed_plan_response():
     repair_messages = str(client.calls[1]["messages"])
     assert "valid JSON" in repair_messages
     assert "success_condition" in repair_messages
+
+
+def test_json_task_planner_normalizes_extra_trailing_brace_and_missing_success():
+    client = FakeClient(
+        (
+            '{"subtasks": [{"title": "Focus search input", '
+            '"instruction": "Click on the browser search input."}]}}'
+        )
+    )
+    planner = JsonTaskPlanner(client=client, model="planner-model")
+
+    result = planner.plan("search the web for aria", max_subtasks=3)
+
+    assert len(client.calls) == 1
+    assert result.subtasks[0].title == "Focus search input"
+    assert result.subtasks[0].success_condition == "Focus search input is visible."
+    assert planner.last_error is None
 
 
 def test_json_task_planner_returns_empty_plan_when_repair_fails():
