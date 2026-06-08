@@ -153,6 +153,30 @@ def test_raw_click_is_rejected_for_focused_submit_query():
     assert "key_combo ENTER" in result.reason
 
 
+def test_raw_click_is_rejected_for_generic_focused_submit():
+    bundle = make_bundle().model_copy(
+        update={
+            "subtask": "Submit the focused prompt.",
+            "success_condition": "The focused prompt is submitted.",
+            "candidates": [],
+        }
+    )
+
+    result = validate_action(
+        ActionProposal(
+            type="click",
+            x=1200,
+            y=400,
+            confidence=0.8,
+            evidence="The focused prompt is ready to submit.",
+        ),
+        bundle,
+    )
+
+    assert result.ok is False
+    assert "key_combo ENTER" in result.reason
+
+
 def test_raw_click_is_rejected_when_evidence_claims_enter():
     result = validate_action(
         ActionProposal(
@@ -167,6 +191,27 @@ def test_raw_click_is_rejected_when_evidence_claims_enter():
 
     assert result.ok is False
     assert "key_combo ENTER" in result.reason
+
+
+def test_raw_click_is_rejected_for_alternate_enter_phrasing():
+    for evidence in (
+        "I should hit Enter to submit the search.",
+        "Use Enter to submit the current prompt.",
+        "Submit with Enter.",
+    ):
+        result = validate_action(
+            ActionProposal(
+                type="click",
+                x=30,
+                y=60,
+                confidence=0.8,
+                evidence=evidence,
+            ),
+            make_bundle().model_copy(update={"candidates": []}),
+        )
+
+        assert result.ok is False
+        assert "key_combo ENTER" in result.reason
 
 
 def test_raw_click_center_evidence_does_not_count_as_enter_key():

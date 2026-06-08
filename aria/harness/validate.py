@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from aria.harness.models import ActionProposal, Candidate, ObservationBundle, ValidationResult
 
 
@@ -154,11 +156,7 @@ def _validate_click(
 
 def _is_focused_submit_context(bundle: ObservationBundle) -> bool:
     task_text = f"{bundle.subtask} {bundle.success_condition}".lower()
-    return (
-        "submit" in task_text
-        and "focused" in task_text
-        and any(term in task_text for term in ("search query", "input", "search input"))
-    )
+    return "submit" in task_text and "focused" in task_text
 
 
 def _evidence_claims_enter(proposal: ActionProposal) -> bool:
@@ -168,9 +166,15 @@ def _evidence_claims_enter(proposal: ActionProposal) -> bool:
         "pressed enter",
         "pressing enter",
         "enter key",
+        "hit enter",
+        "use enter",
+        "with enter",
         "return key",
     )
-    return any(phrase in evidence for phrase in enter_phrases)
+    return any(phrase in evidence for phrase in enter_phrases) or bool(
+        re.search(r"\benter\b", evidence)
+        and re.search(r"\b(press|pressed|pressing|hit|use|using|submit|submitted)\b", evidence)
+    )
 
 
 def _candidate_by_id(bundle: ObservationBundle, candidate_id: str) -> Candidate | None:
