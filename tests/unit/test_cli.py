@@ -877,7 +877,7 @@ def test_task_command_requires_preview_plan():
     result = CliRunner().invoke(app, ["task", "search the web"])
 
     assert result.exit_code == 1
-    assert "Choose --preview-plan" in result.stdout
+    assert "Choose --preview-plan or --run" in result.stdout
 
 
 def test_task_preview_plan_calls_helper(monkeypatch):
@@ -911,6 +911,53 @@ def test_task_preview_plan_calls_helper(monkeypatch):
     assert calls == [("search the web", ".aria/config.json")]
     assert '"status": "preview_plan"' in result.stdout
     assert '"will_execute": false' in result.stdout
+
+
+def test_task_run_calls_helper(monkeypatch):
+    calls = []
+
+    def fake_run(task, apps, config_path, approve):
+        calls.append((task, apps, str(config_path), approve is not None))
+        return {
+            "status": "complete",
+            "goal": task,
+            "subtasks": [],
+            "subtask_results": [],
+            "trace_path": "/tmp/trace.jsonl",
+            "will_execute": False,
+        }
+
+    monkeypatch.setattr("aria.__main__._sleep_before_harness_capture", lambda seconds: None)
+    monkeypatch.setattr("aria.__main__._build_task_run_payload", fake_run)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "task",
+            "search the web",
+            "--run",
+            "--app",
+            "notion",
+            "--config",
+            ".aria/config.json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [("search the web", ["notion"], ".aria/config.json", True)]
+    assert '"status": "complete"' in result.stdout
+
+
+def test_task_command_rejects_preview_plan_and_run_together(monkeypatch):
+    monkeypatch.setattr("aria.__main__._sleep_before_harness_capture", lambda seconds: None)
+
+    result = CliRunner().invoke(
+        app,
+        ["task", "search the web", "--preview-plan", "--run"],
+    )
+
+    assert result.exit_code == 1
+    assert "Choose only one" in result.stdout
 
 
 def test_build_task_preview_plan_payload_writes_trace(monkeypatch, tmp_path):
@@ -984,6 +1031,159 @@ def test_build_task_preview_plan_payload_reports_invalid_plan(monkeypatch, tmp_p
     assert result["planner_error"] == "planner response must decode to a JSON object"
     assert result["planner_response_content"] == "[]"
     assert result["will_execute"] is False
+
+
+def test_build_task_run_payload_executes_valid_plan(monkeypatch, tmp_path):
+    from aria.__main__ import _build_task_run_payload
+    from aria.harness.config import HarnessConfig, save_harness_config
+    from aria.harness.planner import PlannedSubtask, TaskPlan
+
+    config_path = tmp_path / ".aria" / "config.json"
+    config = HarnessConfig()
+    save_harness_config(config_path, config)
+
+    class FakePlanner:
+        last_error = None
+        last_response_content = '{"subtasks":[]}'
+
+        def plan(self, task, *, max_subtasks):
+            return TaskPlan(
+                goal=task,
+                subtasks=[
+                    PlannedSubtask(
+                        title="Focus search input",
+                        instruction="Focus the browser search or address input.",
+                        success_condition="A browser search or address input is focused.",
+                    ),
+                    PlannedSubtask(
+                        title="Type query",
+                        instruction="Type aria into the focused search input.",
+                        success_condition="The focused search input contains aria.",
+                    ),
+                ],
+            )
+
+    calls = []
+
+    def fake_harness_run(goal, subtask, success_condition, apps, config_path, approve):
+        calls.append((goal, subtask, success_condition, apps, approve is not None))
+        return {
+            "status": "complete",
+            "turns": 1,
+            "message": "done",
+            "subtask": subtask,
+            "trace_path": str(tmp_path / f"{len(calls)}.jsonl"),
+            "compact_summary": f"complete: {subtask}",
+        }
+
+    monkeypatch.setattr("aria.__main__.build_completion_client", lambda model_config: object())
+    monkeypatch.setattr("aria.__main__.build_task_planner", lambda client, config: FakePlanner())
+    monkeypatch.setattr("aria.__main__._build_harness_run_payload", fake_harness_run)
+    monkeypatch.setattr("aria.__main__.write_harness_trace", lambda record, trace_dir: tmp_path / "task.jsonl")
+
+    result = _build_task_run_payload(
+        "search the web for aria",
+        apps=[],
+        config_path=config_path,
+        approve=lambda preview: True,
+    )
+
+    assert result["status"] == "complete"
+    assert result["subtasks"][0]["title"] == "Focus search input"
+    assert len(result["subtask_results"]) == 2
+    assert calls[0][1] == "Focus the browser search or address input."
+    assert calls[1][1] == "Type aria into the focused search input."
+    assert result["trace_path"] == str(tmp_path / "task.jsonl")
+
+
+def test_build_task_run_payload_stops_on_failed_subtask(monkeypatch, tmp_path):
+    from aria.__main__ import _build_task_run_payload
+    from aria.harness.config import HarnessConfig, save_harness_config
+    from aria.harness.planner import PlannedSubtask, TaskPlan
+
+    config_path = tmp_path / ".aria" / "config.json"
+    save_harness_config(config_path, HarnessConfig())
+
+    class FakePlanner:
+        last_error = None
+        last_response_content = '{"subtasks":[]}'
+
+        def plan(self, task, *, max_subtasks):
+            return TaskPlan(
+                goal=task,
+                subtasks=[
+                    PlannedSubtask(
+                        title="Focus search input",
+                        instruction="Focus the browser search or address input.",
+                        success_condition="A browser search or address input is focused.",
+                    ),
+                    PlannedSubtask(
+                        title="Type query",
+                        instruction="Type aria into the focused search input.",
+                        success_condition="The focused search input contains aria.",
+                    ),
+                ],
+            )
+
+    calls = []
+
+    def fake_harness_run(goal, subtask, success_condition, apps, config_path, approve):
+        calls.append(subtask)
+        return {
+            "status": "failed",
+            "turns": 1,
+            "message": "validation failed",
+            "subtask": subtask,
+            "trace_path": str(tmp_path / "1.jsonl"),
+            "compact_summary": "failed",
+        }
+
+    monkeypatch.setattr("aria.__main__.build_completion_client", lambda model_config: object())
+    monkeypatch.setattr("aria.__main__.build_task_planner", lambda client, config: FakePlanner())
+    monkeypatch.setattr("aria.__main__._build_harness_run_payload", fake_harness_run)
+    monkeypatch.setattr("aria.__main__.write_harness_trace", lambda record, trace_dir: tmp_path / "task.jsonl")
+
+    result = _build_task_run_payload(
+        "search the web for aria",
+        apps=[],
+        config_path=config_path,
+        approve=lambda preview: True,
+    )
+
+    assert result["status"] == "failed"
+    assert result["message"] == "subtask failed: Focus search input"
+    assert calls == ["Focus the browser search or address input."]
+
+
+def test_build_task_run_payload_reports_invalid_plan(monkeypatch, tmp_path):
+    from aria.__main__ import _build_task_run_payload
+    from aria.harness.config import HarnessConfig, save_harness_config
+    from aria.harness.planner import TaskPlan
+
+    config_path = tmp_path / ".aria" / "config.json"
+    save_harness_config(config_path, HarnessConfig())
+
+    class FakePlanner:
+        last_error = "empty"
+        last_response_content = "{}"
+
+        def plan(self, task, *, max_subtasks):
+            return TaskPlan(goal=task, subtasks=[])
+
+    monkeypatch.setattr("aria.__main__.build_completion_client", lambda model_config: object())
+    monkeypatch.setattr("aria.__main__.build_task_planner", lambda client, config: FakePlanner())
+    monkeypatch.setattr("aria.__main__.write_harness_trace", lambda record, trace_dir: tmp_path / "task.jsonl")
+
+    result = _build_task_run_payload(
+        "search the web for aria",
+        apps=[],
+        config_path=config_path,
+        approve=lambda preview: True,
+    )
+
+    assert result["status"] == "invalid_plan"
+    assert result["validation"]["reason"] == "empty plan"
+    assert result["subtask_results"] == []
 
 
 def test_harness_once_requires_one_mode():

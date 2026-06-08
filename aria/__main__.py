@@ -281,14 +281,29 @@ def _sleep_before_harness_capture(seconds: float) -> None:
 def task_command(
     task: str,
     preview_plan: bool = typer.Option(False, "--preview-plan", help="Plan the task without executing it."),
+    run_mode: bool = typer.Option(False, "--run", help="Plan the task and execute each planned subtask."),
+    apps: list[str] = typer.Option([], "--app", help="Optional app hints for semantic adapters."),
+    start_delay: float = typer.Option(1.0, "--start-delay", help="Seconds to wait before task execution."),
     config_path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", help="Harness config path."),
 ) -> None:
     """Plan a full user task."""
-    if not preview_plan:
-        console.print("[red]Error:[/red] Choose --preview-plan.")
+    if preview_plan and run_mode:
+        console.print("[red]Error:[/red] Choose only one of --preview-plan or --run.")
+        raise typer.Exit(1)
+    if not preview_plan and not run_mode:
+        console.print("[red]Error:[/red] Choose --preview-plan or --run.")
         raise typer.Exit(1)
     try:
-        result = _build_task_preview_plan_payload(task, config_path)
+        if preview_plan:
+            result = _build_task_preview_plan_payload(task, config_path)
+        else:
+            _sleep_before_harness_capture(start_delay)
+            result = _build_task_run_payload(
+                task,
+                apps=apps,
+                config_path=config_path,
+                approve=_confirm_preview_action,
+            )
     except Exception as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from exc
@@ -334,6 +349,91 @@ def _build_task_preview_plan_payload(task: str, config_path: Path) -> dict[str, 
         "subtasks": subtasks,
         "planner_error": planner_error,
         "planner_response_content": planner_response_content,
+        "trace_path": str(trace_path),
+        "will_execute": False,
+    }
+
+
+def _build_task_run_payload(
+    task: str,
+    *,
+    apps: list[str],
+    config_path: Path,
+    approve,
+) -> dict[str, object]:
+    if not config_path.exists():
+        raise FileNotFoundError(f"config not found: {config_path}. Run `aria setup` or pass --config.")
+    config = load_harness_config(config_path)
+    client = build_completion_client(config.planner)
+    planner = build_task_planner(client=client, config=config.planner)
+    plan = planner.plan(task, max_subtasks=config.safety.max_subtasks)
+    validation = validate_plan(plan.subtasks, max_subtasks=config.safety.max_subtasks)
+    subtasks = [subtask.model_dump() for subtask in plan.subtasks]
+    planner_error = getattr(planner, "last_error", None)
+    planner_response_content = getattr(planner, "last_response_content", None)
+
+    subtask_results: list[dict[str, object]] = []
+    status = "complete"
+    message = "task complete"
+    turns = 0
+
+    if validation.ok:
+        for subtask in plan.subtasks:
+            subtask_result = _build_harness_run_payload(
+                task,
+                subtask.instruction,
+                subtask.success_condition,
+                apps,
+                config_path,
+                approve=approve,
+            )
+            subtask_results.append(
+                {
+                    "title": subtask.title,
+                    "instruction": subtask.instruction,
+                    "success_condition": subtask.success_condition,
+                    "result": subtask_result,
+                }
+            )
+            turns += int(subtask_result.get("turns", 0) or 0)
+            if subtask_result.get("status") != "complete":
+                status = "failed"
+                message = f"subtask failed: {subtask.title}"
+                break
+    else:
+        status = "invalid_plan"
+        message = validation.reason
+
+    record = {
+        "mode": "task_run",
+        "goal": task,
+        "planner_provider": config.planner.provider,
+        "planner_model": config.planner.model,
+        "validation": validation.model_dump(),
+        "subtasks": subtasks,
+        "planner_error": planner_error,
+        "planner_response_content": planner_response_content,
+        "result": {
+            "status": status,
+            "turns": turns,
+            "message": message,
+            "subtask_results": subtask_results,
+        },
+        "will_execute": False,
+    }
+    trace_path = write_harness_trace(record, trace_dir=config.trace.output_dir)
+    return {
+        "status": status,
+        "goal": task,
+        "planner_provider": config.planner.provider,
+        "planner_model": config.planner.model,
+        "validation": validation.model_dump(),
+        "subtasks": subtasks,
+        "planner_error": planner_error,
+        "planner_response_content": planner_response_content,
+        "subtask_results": subtask_results,
+        "turns": turns,
+        "message": message,
         "trace_path": str(trace_path),
         "will_execute": False,
     }
