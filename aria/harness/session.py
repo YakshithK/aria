@@ -3,8 +3,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from aria.harness.diagnostics import debug_hint_for_failure, merge_route_mix
 from aria.harness.planner import PlannedSubtask
 
 
@@ -21,6 +22,9 @@ class TaskSessionResult(BaseModel):
     turns: int
     message: str
     subtask_results: list[TaskSubtaskResult]
+    failure_class: str | None = None
+    debug_hint: str | None = None
+    route_mix: dict[str, int] = Field(default_factory=dict)
 
 
 def run_task_session(
@@ -37,6 +41,8 @@ def run_task_session(
             turns=0,
             message=f"too many subtasks: {len(plan)} > {max_subtasks}",
             subtask_results=[],
+            failure_class="planner",
+            debug_hint=debug_hint_for_failure("planner"),
         )
 
     results: list[TaskSubtaskResult] = []
@@ -54,12 +60,18 @@ def run_task_session(
             )
         )
         if raw_result.get("status") != "complete":
+            failure_class = raw_result.get("failure_class") or "unknown"
             return TaskSessionResult(
                 status="failed",
                 completed_subtasks=completed,
                 turns=turns,
                 message=f"subtask failed: {subtask.title}",
                 subtask_results=results,
+                failure_class=failure_class,
+                debug_hint=raw_result.get("debug_hint") or debug_hint_for_failure(failure_class),
+                route_mix=merge_route_mix(
+                    result.result.get("route_mix", {}) for result in results
+                ),
             )
         completed += 1
 
@@ -69,4 +81,5 @@ def run_task_session(
         turns=turns,
         message="task complete",
         subtask_results=results,
+        route_mix=merge_route_mix(result.result.get("route_mix", {}) for result in results),
     )

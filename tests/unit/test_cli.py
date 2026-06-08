@@ -1077,6 +1077,7 @@ def test_build_task_run_payload_executes_valid_plan(monkeypatch, tmp_path):
             "turns": 1,
             "message": "done",
             "subtask": subtask,
+            "route_mix": {"pixel": 1},
             "trace_path": str(tmp_path / f"{len(calls)}.jsonl"),
             "compact_summary": f"complete: {subtask}",
         }
@@ -1099,6 +1100,10 @@ def test_build_task_run_payload_executes_valid_plan(monkeypatch, tmp_path):
     assert calls[0][1] == "Focus the browser search or address input."
     assert calls[1][1] == "Type aria into the focused search input."
     assert calls[2][1] == "Submit the focused search query."
+    assert result["route_mix"] == {"pixel": 3}
+    assert result["actor_provider"] == config.actor.provider
+    assert result["verifier_model"] == config.verifier.model
+    assert result["usage_summary"]["missing_usage_calls"] == 0
     assert result["trace_path"] == str(tmp_path / "task.jsonl")
 
 
@@ -1266,6 +1271,8 @@ def test_build_task_run_payload_reports_invalid_plan(monkeypatch, tmp_path):
     assert result["status"] == "invalid_plan"
     assert result["validation"]["reason"] == "empty plan"
     assert result["subtask_results"] == []
+    assert result["failure_class"] == "planner"
+    assert result["debug_hint"]
 
 
 def test_harness_once_requires_one_mode():

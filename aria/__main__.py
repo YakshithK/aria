@@ -26,6 +26,7 @@ from aria.conductor.local import LocalConductor
 from aria.conductor.registry import WindowRegistry
 from aria.harness.config import DEFAULT_CONFIG_PATH, HarnessConfig, load_harness_config, save_harness_config
 from aria.harness.doctor import run_harness_doctor
+from aria.harness.diagnostics import debug_hint_for_failure
 from aria.harness.execute import HarnessExecutor
 from aria.harness.observe import PillowScreenshotCapture, build_observation_bundle
 from aria.harness.pixel import WindowsPixelExecutor
@@ -43,6 +44,7 @@ from aria.harness.trace_summary import (
     summarize_harness_trace,
     summarize_subtask_result,
 )
+from aria.harness.usage import summarize_usage, usage_to_trace_dict
 from aria.harness.visual_debug import VisualDebugger
 from aria.harness.vlm import build_json_vlm_actor, build_json_vlm_verifier
 from aria.launcher import (
@@ -323,6 +325,9 @@ def _build_task_preview_plan_payload(task: str, config_path: Path) -> dict[str, 
     subtasks = [subtask.model_dump() for subtask in plan.subtasks]
     planner_error = getattr(planner, "last_error", None)
     planner_response_content = getattr(planner, "last_response_content", None)
+    planner_usages = list(getattr(planner, "last_usages", []) or [])
+    usage = usage_to_trace_dict(planner_usages) if planner_usages else []
+    usage_summary = summarize_usage(planner_usages)
     record = {
         "mode": "preview_plan",
         "goal": task,
@@ -338,6 +343,8 @@ def _build_task_preview_plan_payload(task: str, config_path: Path) -> dict[str, 
         "subtasks": subtasks,
         "planner_error": planner_error,
         "planner_response_content": planner_response_content,
+        "usage": usage,
+        "usage_summary": usage_summary,
         "will_execute": False,
     }
     trace_path = write_harness_trace(record, trace_dir=config.trace.output_dir)
@@ -350,6 +357,8 @@ def _build_task_preview_plan_payload(task: str, config_path: Path) -> dict[str, 
         "subtasks": subtasks,
         "planner_error": planner_error,
         "planner_response_content": planner_response_content,
+        "usage": usage,
+        "usage_summary": usage_summary,
         "trace_path": str(trace_path),
         "will_execute": False,
     }
@@ -372,6 +381,7 @@ def _build_task_run_payload(
     subtasks = [subtask.model_dump() for subtask in plan.subtasks]
     planner_error = getattr(planner, "last_error", None)
     planner_response_content = getattr(planner, "last_response_content", None)
+    planner_usages = list(getattr(planner, "last_usages", []) or [])
 
     if validation.ok:
         session_result = run_task_session(
@@ -391,6 +401,9 @@ def _build_task_run_payload(
         message = session_result.message
         turns = session_result.turns
         completed_subtasks = session_result.completed_subtasks
+        failure_class = session_result.failure_class
+        debug_hint = session_result.debug_hint
+        route_mix = session_result.route_mix
         subtask_results = [
             subtask_result.model_dump() for subtask_result in session_result.subtask_results
         ]
@@ -399,23 +412,44 @@ def _build_task_run_payload(
         message = validation.reason
         turns = 0
         completed_subtasks = 0
+        failure_class = "planner"
+        debug_hint = debug_hint_for_failure("planner")
+        route_mix = {}
         subtask_results = []
+
+    subtask_usages = [
+        usage
+        for subtask_result in subtask_results
+        for usage in (subtask_result.get("result", {}).get("usage") or [])
+    ]
+    usage = usage_to_trace_dict(planner_usages) if planner_usages else []
+    all_usages = [*usage, *subtask_usages]
+    usage_summary = summarize_usage(all_usages)
 
     record = {
         "mode": "task_run",
         "goal": task,
         "planner_provider": config.planner.provider,
         "planner_model": config.planner.model,
+        "actor_provider": config.actor.provider,
+        "actor_model": config.actor.model,
+        "verifier_provider": config.verifier.provider,
+        "verifier_model": config.verifier.model,
         "validation": validation.model_dump(),
         "subtasks": subtasks,
         "planner_error": planner_error,
         "planner_response_content": planner_response_content,
+        "usage": all_usages,
+        "usage_summary": usage_summary,
         "result": {
             "status": status,
             "turns": turns,
             "message": message,
             "completed_subtasks": completed_subtasks,
             "subtask_results": subtask_results,
+            "failure_class": failure_class,
+            "debug_hint": debug_hint,
+            "route_mix": route_mix,
         },
         "will_execute": False,
     }
@@ -425,14 +459,23 @@ def _build_task_run_payload(
         "goal": task,
         "planner_provider": config.planner.provider,
         "planner_model": config.planner.model,
+        "actor_provider": config.actor.provider,
+        "actor_model": config.actor.model,
+        "verifier_provider": config.verifier.provider,
+        "verifier_model": config.verifier.model,
         "validation": validation.model_dump(),
         "subtasks": subtasks,
         "planner_error": planner_error,
         "planner_response_content": planner_response_content,
+        "usage": all_usages,
+        "usage_summary": usage_summary,
         "subtask_results": subtask_results,
         "completed_subtasks": completed_subtasks,
         "turns": turns,
         "message": message,
+        "failure_class": failure_class,
+        "debug_hint": debug_hint,
+        "route_mix": route_mix,
         "trace_path": str(trace_path),
         "will_execute": False,
     }
@@ -565,6 +608,9 @@ def _build_harness_preview_payload(
         screenshot_bytes_loader=observer.image_loader,
     )
     observation = preview.observation
+    actor_usages = list(getattr(actor, "last_usages", []) or [])
+    usage = usage_to_trace_dict(actor_usages) if actor_usages else []
+    usage_summary = summarize_usage(actor_usages)
     return {
         "status": "preview",
         "goal": goal,
@@ -581,6 +627,8 @@ def _build_harness_preview_payload(
         "candidate_count": len(observation.candidates),
         "proposal": preview.proposal.model_dump(exclude_none=True),
         "validation": preview.validation.model_dump(),
+        "usage": usage,
+        "usage_summary": usage_summary,
         "will_execute": False,
     }
 
@@ -617,6 +665,14 @@ def _build_harness_approve_payload(
         visual_debugger=visual_debugger,
         screenshot_bytes_loader=observer.image_loader,
     )
+    actor_usages = list(getattr(actor, "last_usages", []) or [])
+    result = {
+        **result,
+        "actor_provider": config.actor.provider,
+        "actor_model": config.actor.model,
+        "usage": usage_to_trace_dict(actor_usages) if actor_usages else [],
+        "usage_summary": summarize_usage(actor_usages),
+    }
     record = _approved_turn_trace_record(
         mode="approve",
         goal=goal,
@@ -681,19 +737,32 @@ def _build_harness_run_payload(
         visual_debugger=visual_debugger,
         screenshot_bytes_loader=observer.image_loader,
     )
+    model_usages = [
+        *list(getattr(actor, "last_usages", []) or []),
+        *list(getattr(verifier, "last_usages", []) or []),
+    ]
+    result_payload = result.model_dump()
+    result_payload["usage"] = usage_to_trace_dict(model_usages) if model_usages else []
+    result_payload["usage_summary"] = summarize_usage(model_usages)
     trace_path = write_harness_trace(
         {
             "mode": "run",
             "goal": goal,
             "subtask": subtask,
             "success_condition": success_condition,
-            "result": result.model_dump(),
+            "actor_provider": config.actor.provider,
+            "actor_model": config.actor.model,
+            "verifier_provider": config.verifier.provider,
+            "verifier_model": config.verifier.model,
+            "usage": result_payload["usage"],
+            "usage_summary": result_payload["usage_summary"],
+            "result": result_payload,
             "turn_records": trace_records,
         },
         trace_dir=config.trace.output_dir,
     )
     return {
-        **result.model_dump(),
+        **result_payload,
         "mode": "run",
         "goal": goal,
         "subtask": subtask,
@@ -757,6 +826,10 @@ def _approved_turn_trace_record(
         "approved": result.get("status") in {"executed", "execution_failed"},
         "execution": result.get("execution"),
         "status": result.get("status"),
+        "actor_provider": result.get("actor_provider"),
+        "actor_model": result.get("actor_model"),
+        "usage": result.get("usage") or [],
+        "usage_summary": result.get("usage_summary") or summarize_usage([]),
         "actor_image_path": preview.get("actor_image_path"),
         "proposal_debug_image_path": preview.get("proposal_debug_image_path"),
     }

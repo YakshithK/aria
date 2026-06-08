@@ -35,6 +35,26 @@ def test_session_runs_subtasks_in_order():
     assert result.subtask_results[0].title == "Focus"
 
 
+def test_session_aggregates_route_mix():
+    plan = [
+        _subtask("Focus", "Focus the search input.", "The search input is focused."),
+        _subtask("Type", "Type aria into the search input.", "The search input contains aria."),
+    ]
+
+    def runner(subtask):
+        route = "pixel" if subtask.title == "Focus" else "keyboard"
+        return {"status": "complete", "turns": 1, "route_mix": {route: 1}}
+
+    result = run_task_session(
+        goal="search the web for aria",
+        plan=plan,
+        subtask_runner=runner,
+        max_subtasks=8,
+    )
+
+    assert result.route_mix == {"pixel": 1, "keyboard": 1}
+
+
 def test_session_stops_on_failed_subtask():
     plan = [
         _subtask("Focus", "Focus the search input.", "The search input is focused."),
@@ -59,6 +79,30 @@ def test_session_stops_on_failed_subtask():
     assert calls == ["Focus"]
 
 
+def test_session_adopts_failed_subtask_diagnostics():
+    plan = [
+        _subtask("Focus", "Focus the search input.", "The search input is focused."),
+    ]
+
+    result = run_task_session(
+        goal="search the web for aria",
+        plan=plan,
+        subtask_runner=lambda subtask: {
+            "status": "failed",
+            "turns": 1,
+            "message": "pixel input unavailable",
+            "failure_class": "environment",
+            "debug_hint": "run doctor",
+            "route_mix": {"pixel": 1},
+        },
+        max_subtasks=8,
+    )
+
+    assert result.failure_class == "environment"
+    assert result.debug_hint == "run doctor"
+    assert result.route_mix == {"pixel": 1}
+
+
 def test_session_rejects_plan_over_max_subtasks():
     plan = [
         _subtask("One", "Perform visible step one.", "Visible step one is complete."),
@@ -76,3 +120,5 @@ def test_session_rejects_plan_over_max_subtasks():
     assert result.completed_subtasks == 0
     assert result.subtask_results == []
     assert "too many subtasks" in result.message
+    assert result.failure_class == "planner"
+    assert result.debug_hint

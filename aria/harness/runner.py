@@ -11,6 +11,11 @@ from aria.harness.models import (
     TurnPreview,
     VerificationResult,
 )
+from aria.harness.diagnostics import (
+    classify_turn_failure,
+    debug_hint_for_failure,
+    route_mix_from_trace,
+)
 from aria.harness.validate import validate_action
 
 
@@ -198,6 +203,14 @@ def run_subtask(
             screenshot_bytes_loader=screenshot_bytes_loader,
         )
         if not validation.ok:
+            failure_class = classify_turn_failure(
+                validation.reason,
+                proposal,
+                validation.model_dump(),
+                None,
+                None,
+                None,
+            )
             record = _trace_record(
                 turn,
                 before,
@@ -209,6 +222,8 @@ def run_subtask(
                 approved=None,
                 actor_image_path=actor_image_path,
                 proposal_debug_image_path=proposal_debug_image_path,
+                failure_class=failure_class,
+                debug_hint=debug_hint_for_failure(failure_class),
             )
             action_trace.append(record)
             _write_trace(trace_writer, record)
@@ -218,9 +233,20 @@ def run_subtask(
                 message=validation.reason,
                 verification=None,
                 action_trace=action_trace,
+                failure_class=failure_class,
+                debug_hint=debug_hint_for_failure(failure_class),
+                route_mix=route_mix_from_trace(action_trace),
             )
 
         if proposal.type == "fail":
+            failure_class = classify_turn_failure(
+                proposal.evidence,
+                proposal,
+                validation.model_dump(),
+                None,
+                None,
+                None,
+            )
             record = _trace_record(
                 turn,
                 before,
@@ -232,6 +258,8 @@ def run_subtask(
                 approved=None,
                 actor_image_path=actor_image_path,
                 proposal_debug_image_path=proposal_debug_image_path,
+                failure_class=failure_class,
+                debug_hint=debug_hint_for_failure(failure_class),
             )
             action_trace.append(record)
             _write_trace(trace_writer, record)
@@ -241,6 +269,9 @@ def run_subtask(
                 message=proposal.evidence,
                 verification=None,
                 action_trace=action_trace,
+                failure_class=failure_class,
+                debug_hint=debug_hint_for_failure(failure_class),
+                route_mix=route_mix_from_trace(action_trace),
             )
 
         preview = TurnPreview(
@@ -254,6 +285,14 @@ def run_subtask(
         if approve is not None:
             approved = approve(preview)
         if not approved:
+            failure_class = classify_turn_failure(
+                "action not approved",
+                proposal,
+                validation.model_dump(),
+                None,
+                None,
+                False,
+            )
             record = _trace_record(
                 turn,
                 before,
@@ -265,6 +304,8 @@ def run_subtask(
                 approved=False,
                 actor_image_path=actor_image_path,
                 proposal_debug_image_path=proposal_debug_image_path,
+                failure_class=failure_class,
+                debug_hint=debug_hint_for_failure(failure_class),
             )
             action_trace.append(record)
             _write_trace(trace_writer, record)
@@ -274,10 +315,21 @@ def run_subtask(
                 message="action not approved",
                 verification=None,
                 action_trace=action_trace,
+                failure_class=failure_class,
+                debug_hint=debug_hint_for_failure(failure_class),
+                route_mix=route_mix_from_trace(action_trace),
             )
 
         execution = executor.execute(proposal, validation, before)
         if execution.get("ok") is False:
+            failure_class = classify_turn_failure(
+                str(execution.get("error") or "execution failed"),
+                proposal,
+                validation.model_dump(),
+                execution,
+                None,
+                True,
+            )
             record = _trace_record(
                 turn,
                 before,
@@ -289,6 +341,8 @@ def run_subtask(
                 approved=True,
                 actor_image_path=actor_image_path,
                 proposal_debug_image_path=proposal_debug_image_path,
+                failure_class=failure_class,
+                debug_hint=debug_hint_for_failure(failure_class),
             )
             action_trace.append(record)
             _write_trace(trace_writer, record)
@@ -298,6 +352,9 @@ def run_subtask(
                 message=str(execution.get("error") or "execution failed"),
                 verification=None,
                 action_trace=action_trace,
+                failure_class=failure_class,
+                debug_hint=debug_hint_for_failure(failure_class),
+                route_mix=route_mix_from_trace(action_trace),
             )
 
         recent_actions.append(
@@ -320,6 +377,18 @@ def run_subtask(
             execution=execution,
         )
         last_verification = verification
+        failure_class = None
+        debug_hint = None
+        if verification.status == "failed":
+            failure_class = classify_turn_failure(
+                verification.evidence,
+                proposal,
+                validation.model_dump(),
+                execution,
+                verification.model_dump(),
+                True,
+            )
+            debug_hint = debug_hint_for_failure(failure_class)
         record = _trace_record(
             turn,
             before,
@@ -331,6 +400,8 @@ def run_subtask(
             approved=True,
             actor_image_path=actor_image_path,
             proposal_debug_image_path=proposal_debug_image_path,
+            failure_class=failure_class,
+            debug_hint=debug_hint,
         )
         action_trace.append(record)
         _write_trace(trace_writer, record)
@@ -342,6 +413,7 @@ def run_subtask(
                 message=verification.evidence,
                 verification=verification,
                 action_trace=action_trace,
+                route_mix=route_mix_from_trace(action_trace),
             )
         if verification.status == "failed":
             return HarnessResult(
@@ -350,14 +422,21 @@ def run_subtask(
                 message=verification.evidence,
                 verification=verification,
                 action_trace=action_trace,
+                failure_class=failure_class,
+                debug_hint=debug_hint,
+                route_mix=route_mix_from_trace(action_trace),
             )
 
+    failure_class = "verification"
     return HarnessResult(
         status="max_turns",
         turns=max_turns,
         message=f"Subtask did not complete within {max_turns} turns.",
         verification=last_verification,
         action_trace=action_trace,
+        failure_class=failure_class,
+        debug_hint=debug_hint_for_failure(failure_class),
+        route_mix=route_mix_from_trace(action_trace),
     )
 
 
@@ -373,6 +452,8 @@ def _trace_record(
     approved: bool | None = None,
     actor_image_path: str | None = None,
     proposal_debug_image_path: str | None = None,
+    failure_class: str | None = None,
+    debug_hint: str | None = None,
 ) -> dict[str, Any]:
     return {
         "turn": turn,
@@ -387,6 +468,8 @@ def _trace_record(
         "approved": approved,
         "execution": execution,
         "verification": verification,
+        "failure_class": failure_class,
+        "debug_hint": debug_hint,
         "actor_image_path": actor_image_path,
         "proposal_debug_image_path": proposal_debug_image_path,
     }

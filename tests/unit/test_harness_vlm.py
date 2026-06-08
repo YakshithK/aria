@@ -20,9 +20,16 @@ class Choice:
         self.message = Message(content)
 
 
+class Usage:
+    prompt_tokens = 10
+    completion_tokens = 5
+    total_tokens = 15
+
+
 class Response:
-    def __init__(self, content: str):
+    def __init__(self, content: str, *, usage=None):
         self.choices = [Choice(content)]
+        self.usage = usage
 
 
 class FakeClient:
@@ -91,6 +98,32 @@ def test_json_vlm_actor_parses_action_proposal_and_uses_model():
     assert proposal.type == "click_element"
     assert proposal.candidate_id == "candidate_1"
     assert client.calls[0]["model"] == "raw-vlm"
+
+
+def test_json_vlm_actor_records_usage():
+    class UsageClient(FakeClient):
+        def create_completion(self, **kwargs):
+            self.calls.append(kwargs)
+            return Response(self.content, usage=Usage())
+
+    client = UsageClient(
+        json.dumps(
+            {
+                "type": "click_element",
+                "candidate_id": "candidate_1",
+                "confidence": 0.8,
+                "evidence": "Search is visible.",
+            }
+        )
+    )
+
+    actor = JsonVLMActor(client=client, provider="hackclub", model="raw-vlm")
+    actor.propose(bundle())
+
+    assert actor.last_usage is not None
+    assert actor.last_usage.provider == "hackclub"
+    assert actor.last_usage.role == "actor"
+    assert actor.last_usage.total_tokens == 15
 
 
 def test_json_vlm_actor_normalizes_coordinate_pair_in_x_field():

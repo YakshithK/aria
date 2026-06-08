@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from aria.models import Bounds
 
@@ -116,3 +116,6 @@ class HarnessResult(BaseModel):
     message: str
     verification: VerificationResult | None = None
     action_trace: list[dict[str, Any]]
+    failure_class: str | None = None
+    debug_hint: str | None = None
+    route_mix: dict[str, int] = Field(default_factory=dict)

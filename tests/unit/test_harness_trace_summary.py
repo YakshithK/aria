@@ -249,6 +249,42 @@ def test_summarize_task_run_lists_subtasks():
     assert "trace: .aria/runs/submit.jsonl" in summary
 
 
+def test_summarize_task_run_includes_diagnostics_models_and_usage():
+    record = {
+        "mode": "task_run",
+        "goal": "search the web for aria",
+        "planner_provider": "hackclub",
+        "planner_model": "bytedance/ui-tars-1.5-7b",
+        "actor_provider": "hackclub",
+        "actor_model": "bytedance/ui-tars-1.5-7b",
+        "verifier_provider": "hackclub",
+        "verifier_model": "bytedance/ui-tars-1.5-7b",
+        "usage_summary": {
+            "total_tokens": 120,
+            "estimated_cost_usd": None,
+            "missing_usage_calls": 1,
+            "calls_by_role": {"planner": 1, "actor": 1, "verifier": 0},
+        },
+        "result": {
+            "status": "failed",
+            "turns": 1,
+            "message": "pixel input unavailable",
+            "failure_class": "environment",
+            "debug_hint": "Run aria doctor.",
+            "route_mix": {"pixel": 1},
+            "subtask_results": [],
+        },
+    }
+
+    summary = summarize_harness_trace(record)
+
+    assert "failure: environment" in summary
+    assert "hint: Run aria doctor." in summary
+    assert "routes: pixel=1" in summary
+    assert "planner=hackclub/bytedance/ui-tars-1.5-7b" in summary
+    assert "usage: total_tokens=120" in summary
+
+
 def test_compact_subtask_summary_lists_status_turns_and_actions():
     result = HarnessResult(
         status="complete",

@@ -47,6 +47,9 @@ def summarize_harness_trace(record: dict[str, Any]) -> str:
         f"turns: {result.get('turns')}",
         f"message: {result.get('message')}",
     ]
+    _append_diagnostic_lines(lines, result)
+    _append_model_lines(lines, record)
+    _append_usage_lines(lines, result.get("usage_summary") or record.get("usage_summary"))
     for turn in result.get("action_trace") or []:
         proposal = turn.get("proposal") or {}
         validation = turn.get("validation") or {}
@@ -54,6 +57,7 @@ def summarize_harness_trace(record: dict[str, Any]) -> str:
         verification = turn.get("verification") or {}
         lines.append(f"turn {turn.get('turn')}: {_proposal_label(proposal)}")
         lines.append(f"validation: {validation.get('reason')}")
+        _append_diagnostic_lines(lines, turn)
         if turn.get("approved") is not None:
             lines.append(f"approved: {str(bool(turn.get('approved'))).lower()}")
         if isinstance(execution, dict):
@@ -80,11 +84,15 @@ def _summarize_task_run(record: dict[str, Any]) -> str:
         f"turns: {result.get('turns')}",
         f"message: {result.get('message')}",
     ]
+    _append_diagnostic_lines(lines, result)
+    _append_model_lines(lines, record)
+    _append_usage_lines(lines, record.get("usage_summary"))
     for index, subtask in enumerate(result.get("subtask_results") or [], start=1):
         subtask_result = subtask.get("result") or {}
         lines.append(
             f"subtask {index}: {subtask.get('title')} - {subtask_result.get('status')}"
         )
+        _append_diagnostic_lines(lines, subtask_result)
         if subtask_result.get("trace_path"):
             lines.append(f"trace: {subtask_result.get('trace_path')}")
     return "\n".join(lines)
@@ -136,6 +144,7 @@ def summarize_approved_turn(record: dict[str, Any]) -> str:
         lines.append(f"execution: {state} via {route}")
     else:
         lines.append("execution: none")
+    _append_usage_lines(lines, record.get("usage_summary"))
     return "\n".join(lines)
 
 
@@ -146,6 +155,8 @@ def summarize_subtask_result(result: Any) -> str:
         f"turns: {payload.get('turns')}",
         f"message: {payload.get('message')}",
     ]
+    _append_diagnostic_lines(lines, payload)
+    _append_usage_lines(lines, payload.get("usage_summary"))
     for record in payload.get("action_trace") or []:
         proposal = record.get("proposal") or {}
         validation = record.get("validation") or {}
@@ -154,6 +165,7 @@ def summarize_subtask_result(result: Any) -> str:
         lines.append(f"turn {record.get('turn')}: {proposal.get('type')}")
         lines.append(f"screenshot: {record.get('before_screenshot_path')}")
         lines.append(f"validation: {validation.get('reason')}")
+        _append_diagnostic_lines(lines, record)
         if record.get("approved") is not None:
             lines.append(f"approved: {str(bool(record.get('approved'))).lower()}")
         if record.get("actor_image_path"):
@@ -169,3 +181,53 @@ def summarize_subtask_result(result: Any) -> str:
                 f"verification: {verification.get('status')} - {verification.get('evidence')}"
             )
     return "\n".join(lines)
+
+
+def _append_diagnostic_lines(lines: list[str], payload: dict[str, Any]) -> None:
+    failure_class = payload.get("failure_class")
+    debug_hint = payload.get("debug_hint")
+    route_mix = payload.get("route_mix")
+    if failure_class:
+        lines.append(f"failure: {failure_class}")
+    if debug_hint:
+        lines.append(f"hint: {debug_hint}")
+    if isinstance(route_mix, dict) and route_mix:
+        lines.append(f"routes: {_format_route_mix(route_mix)}")
+
+
+def _append_model_lines(lines: list[str], record: dict[str, Any]) -> None:
+    parts = []
+    for role in ("planner", "actor", "verifier"):
+        provider = record.get(f"{role}_provider")
+        model = record.get(f"{role}_model")
+        if provider or model:
+            parts.append(f"{role}={provider or 'unknown'}/{model or 'unknown'}")
+    if parts:
+        lines.append(f"models: {' '.join(parts)}")
+
+
+def _append_usage_lines(lines: list[str], usage_summary: Any) -> None:
+    if not isinstance(usage_summary, dict):
+        lines.append("usage: unavailable")
+        return
+    calls_by_role = usage_summary.get("calls_by_role") or {}
+    total_calls = sum(calls_by_role.values()) if isinstance(calls_by_role, dict) else 0
+    if total_calls == 0:
+        lines.append("usage: unavailable")
+        return
+    cost = usage_summary.get("estimated_cost_usd")
+    cost_text = str(cost) if cost is not None else "unknown"
+    lines.append(
+        "usage: "
+        f"total_tokens={usage_summary.get('total_tokens', 0)} "
+        f"estimated_cost_usd={cost_text} "
+        f"missing_usage_calls={usage_summary.get('missing_usage_calls', 0)}"
+    )
+
+
+def _format_route_mix(route_mix: dict[str, Any]) -> str:
+    return " ".join(
+        f"{route}={count}"
+        for route, count in sorted(route_mix.items())
+        if count
+    )

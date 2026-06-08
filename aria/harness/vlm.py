@@ -10,6 +10,7 @@ from aria.harness.config import ModelConfig
 from aria.harness.images import load_image_bytes
 from aria.harness.models import ActionProposal, ObservationBundle, VerificationResult
 from aria.harness.prompt import build_actor_messages, build_verifier_messages
+from aria.harness.usage import ModelUsage, extract_model_usage
 
 
 class CompletionClient(Protocol):
@@ -26,6 +27,7 @@ def build_json_vlm_actor(
 ) -> "JsonVLMActor":
     return JsonVLMActor(
         client=client,
+        provider=config.provider,
         model=config.model,
         image_loader=image_loader if image_loader is not None else load_image_bytes,
         actor_image_loader=actor_image_loader,
@@ -40,6 +42,7 @@ def build_json_vlm_verifier(
 ) -> "JsonVLMVerifier":
     return JsonVLMVerifier(
         client=client,
+        provider=config.provider,
         model=config.model,
         image_loader=image_loader if image_loader is not None else load_image_bytes,
     )
@@ -56,14 +59,21 @@ class JsonVLMActor:
         self,
         *,
         client: CompletionClient,
+        provider: str = "unknown",
         model: str,
         image_loader: Callable[[str], bytes] | None = None,
         actor_image_loader: Callable[[ObservationBundle], bytes | None] | None = None,
     ) -> None:
         self.client = client
+        self.provider = provider
         self.model = model
         self.image_loader = image_loader
         self.actor_image_loader = actor_image_loader
+        self.last_usages: list[ModelUsage] = []
+
+    @property
+    def last_usage(self) -> ModelUsage | None:
+        return self.last_usages[-1] if self.last_usages else None
 
     def propose(self, observation: ObservationBundle) -> ActionProposal:
         image_bytes = None
@@ -78,6 +88,7 @@ class JsonVLMActor:
                 messages=messages,
                 temperature=0,
             )
+            self._record_usage(response)
             proposal = ActionProposal(**_action_json_from_response(response))
         except (ValueError, ValidationError) as exc:
             return self._repair_invalid_actor_response(
@@ -96,6 +107,7 @@ class JsonVLMActor:
                 messages=_repair_messages(messages, proposal, repair_reason),
                 temperature=0,
             )
+            self._record_usage(repair_response)
             repaired = ActionProposal(**_action_json_from_response(repair_response))
             repaired_reason = _candidate_action_error(repaired, observation)
             if repaired_reason is None:
@@ -128,6 +140,7 @@ class JsonVLMActor:
                 messages=_json_repair_messages(messages, previous_content, reason),
                 temperature=0,
             )
+            self._record_usage(repair_response)
             repaired = ActionProposal(**_action_json_from_response(repair_response))
             repaired_reason = _candidate_action_error(repaired, observation)
             if repaired_reason is None:
@@ -146,18 +159,35 @@ class JsonVLMActor:
                 reason="invalid_vlm_action",
             )
 
+    def _record_usage(self, response: Any) -> None:
+        self.last_usages.append(
+            extract_model_usage(
+                response,
+                provider=self.provider,
+                model=self.model,
+                role="actor",
+            )
+        )
+
 
 class JsonVLMVerifier:
     def __init__(
         self,
         *,
         client: CompletionClient,
+        provider: str = "unknown",
         model: str,
         image_loader: Callable[[str], bytes] | None = None,
     ) -> None:
         self.client = client
+        self.provider = provider
         self.model = model
         self.image_loader = image_loader
+        self.last_usages: list[ModelUsage] = []
+
+    @property
+    def last_usage(self) -> ModelUsage | None:
+        return self.last_usages[-1] if self.last_usages else None
 
     def verify(
         self,
@@ -193,6 +223,7 @@ class JsonVLMVerifier:
                 ),
                 temperature=0,
             )
+            self._record_usage(response)
             return VerificationResult(**_json_from_response(response))
         except (ValueError, ValidationError) as exc:
             return VerificationResult(
@@ -201,6 +232,16 @@ class JsonVLMVerifier:
                 evidence=f"VLM verifier returned invalid verification JSON: {exc}",
                 next_hint=None,
             )
+
+    def _record_usage(self, response: Any) -> None:
+        self.last_usages.append(
+            extract_model_usage(
+                response,
+                provider=self.provider,
+                model=self.model,
+                role="verifier",
+            )
+        )
 
 
 def _json_from_response(response: Any) -> dict[str, Any]:

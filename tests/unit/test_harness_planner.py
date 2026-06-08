@@ -20,9 +20,16 @@ class Choice:
         self.message = Message(content)
 
 
+class Usage:
+    prompt_tokens = 20
+    completion_tokens = 10
+    total_tokens = 30
+
+
 class Response:
-    def __init__(self, content: str):
+    def __init__(self, content: str, *, usage=None):
         self.choices = [Choice(content)]
+        self.usage = usage
 
 
 class FakeClient:
@@ -33,6 +40,12 @@ class FakeClient:
     def create_completion(self, **kwargs):
         self.calls.append(kwargs)
         return Response(self.content)
+
+
+class UsageClient(FakeClient):
+    def create_completion(self, **kwargs):
+        self.calls.append(kwargs)
+        return Response(self.content, usage=Usage())
 
 
 class SequenceClient:
@@ -51,6 +64,30 @@ def test_validate_plan_rejects_empty_plan():
 
     assert result.ok is False
     assert "empty" in result.reason
+
+
+def test_json_task_planner_records_usage():
+    client = UsageClient(
+        json.dumps(
+            {
+                "subtasks": [
+                    {
+                        "title": "Focus search input",
+                        "instruction": "Focus the browser search or address input.",
+                        "success_condition": "A browser search or address input is focused.",
+                    }
+                ]
+            }
+        )
+    )
+
+    planner = JsonTaskPlanner(client=client, provider="hackclub", model="planner-model")
+    planner.plan("focus search input", max_subtasks=3)
+
+    assert planner.last_usage is not None
+    assert planner.last_usage.provider == "hackclub"
+    assert planner.last_usage.role == "planner"
+    assert planner.last_usage.total_tokens == 30
 
 
 def test_validate_plan_rejects_too_many_subtasks():

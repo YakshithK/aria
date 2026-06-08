@@ -483,6 +483,10 @@ def test_runner_fails_when_validator_rejects_action():
 
     assert result.status == "failed"
     assert "confidence" in result.message.lower()
+    assert result.failure_class == "validation"
+    assert result.debug_hint
+    assert result.route_mix == {"click_element": 1}
+    assert result.action_trace[0]["failure_class"] == "validation"
 
 
 def test_runner_does_not_execute_when_approval_denies():
@@ -507,6 +511,8 @@ def test_runner_does_not_execute_when_approval_denies():
     assert len(previews) == 1
     assert result.action_trace[0]["approved"] is False
     assert result.action_trace[0]["execution"] is None
+    assert result.failure_class == "user_denied"
+    assert result.action_trace[0]["failure_class"] == "user_denied"
 
 
 def test_runner_stops_on_actor_fail_without_approval_or_execution():

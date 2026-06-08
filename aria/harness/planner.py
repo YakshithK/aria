@@ -7,6 +7,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel
 
 from aria.harness.config import ModelConfig
+from aria.harness.usage import ModelUsage, extract_model_usage
 
 
 PLANNER_SYSTEM_PROMPT = """You decompose desktop automation tasks into small observable subtasks.
@@ -84,19 +85,26 @@ def build_task_planner(
     client: CompletionClient,
     config: ModelConfig,
 ) -> "JsonTaskPlanner":
-    return JsonTaskPlanner(client=client, model=config.model)
+    return JsonTaskPlanner(client=client, provider=config.provider, model=config.model)
 
 
 class JsonTaskPlanner:
-    def __init__(self, *, client: CompletionClient, model: str) -> None:
+    def __init__(self, *, client: CompletionClient, provider: str = "unknown", model: str) -> None:
         self.client = client
+        self.provider = provider
         self.model = model
         self.last_error: str | None = None
         self.last_response_content: str | None = None
+        self.last_usages: list[ModelUsage] = []
+
+    @property
+    def last_usage(self) -> ModelUsage | None:
+        return self.last_usages[-1] if self.last_usages else None
 
     def plan(self, task: str, *, max_subtasks: int) -> TaskPlan:
         self.last_error = None
         self.last_response_content = None
+        self.last_usages = []
         messages = build_planner_messages(task, max_subtasks=max_subtasks)
         try:
             response = self.client.create_completion(
@@ -104,6 +112,7 @@ class JsonTaskPlanner:
                 messages=messages,
                 temperature=0,
             )
+            self._record_usage(response)
             plan = self._plan_from_response(task, response)
             validation = validate_plan(plan.subtasks, goal=task, max_subtasks=max_subtasks)
             if validation.ok:
@@ -150,6 +159,7 @@ class JsonTaskPlanner:
                 ),
                 temperature=0,
             )
+            self._record_usage(repair_response)
             plan = self._plan_from_response(task, repair_response)
             validation = validate_plan(plan.subtasks, goal=task, max_subtasks=max_subtasks)
             if not validation.ok:
@@ -159,6 +169,16 @@ class JsonTaskPlanner:
         except Exception as repair_exc:
             self.last_error = f"planner JSON error after repair: {repair_exc}"
             return TaskPlan(goal=task, subtasks=[])
+
+    def _record_usage(self, response: Any) -> None:
+        self.last_usages.append(
+            extract_model_usage(
+                response,
+                provider=self.provider,
+                model=self.model,
+                role="planner",
+            )
+        )
 
 
 def _planner_repair_messages(
