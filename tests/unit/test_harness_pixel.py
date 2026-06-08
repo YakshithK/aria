@@ -145,3 +145,37 @@ def test_wsl_backend_type_text_escapes_single_quotes(tmp_path):
 
     assert result == {"ok": True}
     assert "[System.Windows.Forms.SendKeys]::SendWait('can''t')" in calls[0][-1]
+
+
+def test_wsl_backend_key_combo_encodes_lowercase_enter_as_special_key(tmp_path):
+    powershell = tmp_path / "powershell.exe"
+    powershell.write_text("fake", encoding="utf-8")
+    calls = []
+
+    def fake_run(command, capture_output, check, text):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    backend = WslWindowsPixelBackend(powershell_path=powershell, run_command=fake_run)
+
+    result = backend.key_combo(["enter"])
+
+    assert result == {"ok": True}
+    assert "[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')" in calls[0][-1]
+
+
+def test_wsl_backend_key_combo_encodes_modifier_with_special_key(tmp_path):
+    powershell = tmp_path / "powershell.exe"
+    powershell.write_text("fake", encoding="utf-8")
+    calls = []
+
+    def fake_run(command, capture_output, check, text):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    backend = WslWindowsPixelBackend(powershell_path=powershell, run_command=fake_run)
+
+    result = backend.key_combo(["ctrl", "enter"])
+
+    assert result == {"ok": True}
+    assert "[System.Windows.Forms.SendKeys]::SendWait('^{ENTER}')" in calls[0][-1]

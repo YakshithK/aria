@@ -232,12 +232,33 @@ def _send_keys_combo(keys: list[str]) -> str:
         "alt": "%",
         "shift": "+",
     }
+    special_keys = {
+        "enter": "{ENTER}",
+        "return": "{ENTER}",
+        "tab": "{TAB}",
+        "esc": "{ESC}",
+        "escape": "{ESC}",
+        "backspace": "{BACKSPACE}",
+        "delete": "{DELETE}",
+        "del": "{DELETE}",
+        "space": " ",
+        "up": "{UP}",
+        "down": "{DOWN}",
+        "left": "{LEFT}",
+        "right": "{RIGHT}",
+        "home": "{HOME}",
+        "end": "{END}",
+        "pageup": "{PGUP}",
+        "pagedown": "{PGDN}",
+    }
     prefix = ""
     rest: list[str] = []
     for key in keys:
         normalized = key.lower()
         if normalized in modifiers:
             prefix += modifiers[normalized]
+        elif normalized in special_keys:
+            rest.append(special_keys[normalized])
         else:
             rest.append(key)
     target = "".join(rest)
