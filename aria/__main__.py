@@ -33,6 +33,7 @@ from aria.harness.planner import build_task_planner, validate_plan
 from aria.harness.provider import build_completion_client
 from aria.harness.runner import preview_turn, run_approved_turn, run_subtask
 from aria.harness.semantic import LocalSemanticExecutor, SemanticHarnessObserver, SemanticObserverAdapter
+from aria.harness.session import run_task_session
 from aria.harness.trace import write_harness_trace
 from aria.harness.trace_summary import (
     compact_subtask_summary,
@@ -372,37 +373,33 @@ def _build_task_run_payload(
     planner_error = getattr(planner, "last_error", None)
     planner_response_content = getattr(planner, "last_response_content", None)
 
-    subtask_results: list[dict[str, object]] = []
-    status = "complete"
-    message = "task complete"
-    turns = 0
-
     if validation.ok:
-        for subtask in plan.subtasks:
-            subtask_result = _build_harness_run_payload(
+        session_result = run_task_session(
+            goal=task,
+            plan=plan.subtasks,
+            max_subtasks=config.safety.max_subtasks,
+            subtask_runner=lambda subtask: _build_harness_run_payload(
                 task,
                 subtask.instruction,
                 subtask.success_condition,
                 apps,
                 config_path,
                 approve=approve,
-            )
-            subtask_results.append(
-                {
-                    "title": subtask.title,
-                    "instruction": subtask.instruction,
-                    "success_condition": subtask.success_condition,
-                    "result": subtask_result,
-                }
-            )
-            turns += int(subtask_result.get("turns", 0) or 0)
-            if subtask_result.get("status") != "complete":
-                status = "failed"
-                message = f"subtask failed: {subtask.title}"
-                break
+            ),
+        )
+        status = session_result.status
+        message = session_result.message
+        turns = session_result.turns
+        completed_subtasks = session_result.completed_subtasks
+        subtask_results = [
+            subtask_result.model_dump() for subtask_result in session_result.subtask_results
+        ]
     else:
         status = "invalid_plan"
         message = validation.reason
+        turns = 0
+        completed_subtasks = 0
+        subtask_results = []
 
     record = {
         "mode": "task_run",
@@ -417,6 +414,7 @@ def _build_task_run_payload(
             "status": status,
             "turns": turns,
             "message": message,
+            "completed_subtasks": completed_subtasks,
             "subtask_results": subtask_results,
         },
         "will_execute": False,
@@ -432,6 +430,7 @@ def _build_task_run_payload(
         "planner_error": planner_error,
         "planner_response_content": planner_response_content,
         "subtask_results": subtask_results,
+        "completed_subtasks": completed_subtasks,
         "turns": turns,
         "message": message,
         "trace_path": str(trace_path),

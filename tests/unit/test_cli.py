@@ -1102,6 +1102,77 @@ def test_build_task_run_payload_executes_valid_plan(monkeypatch, tmp_path):
     assert result["trace_path"] == str(tmp_path / "task.jsonl")
 
 
+def test_build_task_run_payload_delegates_to_session(monkeypatch, tmp_path):
+    from aria.__main__ import _build_task_run_payload
+    from aria.harness.config import HarnessConfig, save_harness_config
+    from aria.harness.planner import PlannedSubtask, TaskPlan
+    from aria.harness.session import TaskSessionResult, TaskSubtaskResult
+
+    config_path = tmp_path / ".aria" / "config.json"
+    save_harness_config(config_path, HarnessConfig())
+
+    subtask = PlannedSubtask(
+        title="Focus search input",
+        instruction="Focus the browser search or address input.",
+        success_condition="A browser search or address input is focused.",
+    )
+
+    class FakePlanner:
+        last_error = None
+        last_response_content = '{"subtasks":[]}'
+
+        def plan(self, task, *, max_subtasks):
+            return TaskPlan(goal=task, subtasks=[subtask])
+
+    captured = {}
+
+    def fake_session(goal, plan, subtask_runner, max_subtasks):
+        captured["goal"] = goal
+        captured["plan"] = plan
+        captured["max_subtasks"] = max_subtasks
+        subtask_result = subtask_runner(plan[0])
+        return TaskSessionResult(
+            status="complete",
+            completed_subtasks=1,
+            turns=1,
+            message="task complete",
+            subtask_results=[
+                TaskSubtaskResult(
+                    title=plan[0].title,
+                    instruction=plan[0].instruction,
+                    success_condition=plan[0].success_condition,
+                    result=subtask_result,
+                )
+            ],
+        )
+
+    monkeypatch.setattr("aria.__main__.build_completion_client", lambda model_config: object())
+    monkeypatch.setattr("aria.__main__.build_task_planner", lambda client, config: FakePlanner())
+    monkeypatch.setattr("aria.__main__.run_task_session", fake_session)
+    monkeypatch.setattr(
+        "aria.__main__._build_harness_run_payload",
+        lambda goal, subtask, success_condition, apps, config_path, approve: {
+            "status": "complete",
+            "turns": 1,
+            "message": "done",
+            "trace_path": str(tmp_path / "subtask.jsonl"),
+        },
+    )
+    monkeypatch.setattr("aria.__main__.write_harness_trace", lambda record, trace_dir: tmp_path / "task.jsonl")
+
+    result = _build_task_run_payload(
+        "focus search",
+        apps=[],
+        config_path=config_path,
+        approve=lambda preview: True,
+    )
+
+    assert captured["goal"] == "focus search"
+    assert captured["plan"] == [subtask]
+    assert result["status"] == "complete"
+    assert result["completed_subtasks"] == 1
+
+
 def test_build_task_run_payload_stops_on_failed_subtask(monkeypatch, tmp_path):
     from aria.__main__ import _build_task_run_payload
     from aria.harness.config import HarnessConfig, save_harness_config
