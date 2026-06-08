@@ -129,6 +129,85 @@ def test_raw_click_is_allowed_when_no_candidates_are_available():
     assert result.execution_route == "pixel"
 
 
+def test_raw_click_is_rejected_for_focused_submit_query():
+    bundle = make_bundle().model_copy(
+        update={
+            "subtask": "Submit the focused search query.",
+            "success_condition": "Search results for aria are visible.",
+            "candidates": [],
+        }
+    )
+
+    result = validate_action(
+        ActionProposal(
+            type="click",
+            x=1200,
+            y=400,
+            confidence=0.8,
+            evidence="The focused search query is ready to submit.",
+        ),
+        bundle,
+    )
+
+    assert result.ok is False
+    assert "key_combo ENTER" in result.reason
+
+
+def test_raw_click_is_rejected_when_evidence_claims_enter():
+    result = validate_action(
+        ActionProposal(
+            type="click",
+            x=30,
+            y=60,
+            confidence=0.8,
+            evidence="I pressed Enter to submit the search query.",
+        ),
+        make_bundle().model_copy(update={"candidates": []}),
+    )
+
+    assert result.ok is False
+    assert "key_combo ENTER" in result.reason
+
+
+def test_raw_click_center_evidence_does_not_count_as_enter_key():
+    result = validate_action(
+        ActionProposal(
+            type="click",
+            x=30,
+            y=60,
+            confidence=0.8,
+            evidence="Click the center of the visible search button.",
+        ),
+        make_bundle().model_copy(update={"candidates": []}),
+    )
+
+    assert result.ok is True
+    assert result.execution_route == "pixel"
+
+
+def test_enter_key_combo_is_accepted_for_focused_submit_query():
+    bundle = make_bundle().model_copy(
+        update={
+            "subtask": "Submit the focused search query.",
+            "success_condition": "Search results for aria are visible.",
+            "candidates": [],
+        }
+    )
+
+    result = validate_action(
+        ActionProposal(
+            type="key_combo",
+            keys=["ENTER"],
+            confidence=0.8,
+            evidence="Press Enter to submit the focused search query.",
+        ),
+        bundle,
+    )
+
+    assert result.ok is True
+    assert result.execution_route == "keyboard"
+
+
 def test_destructive_candidate_is_blocked_without_explicit_subtask():
     result = validate_action(
         ActionProposal(

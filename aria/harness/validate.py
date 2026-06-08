@@ -43,6 +43,8 @@ def validate_action(
     if proposal.type == "type_into_element":
         return _validate_type_into_element(proposal, bundle)
     if proposal.type == "click":
+        if _is_focused_submit_context(bundle) or _evidence_claims_enter(proposal):
+            return _reject("focused submit should use key_combo ENTER, not raw click")
         return _validate_click(proposal, bundle)
     if proposal.type == "type":
         if not proposal.text:
@@ -148,6 +150,27 @@ def _validate_click(
     if not _inside_screen(proposal.x, proposal.y, bundle.screen_size):
         return _reject("click coordinates are outside screen bounds")
     return _accept("pixel click accepted", "pixel")
+
+
+def _is_focused_submit_context(bundle: ObservationBundle) -> bool:
+    task_text = f"{bundle.subtask} {bundle.success_condition}".lower()
+    return (
+        "submit" in task_text
+        and "focused" in task_text
+        and any(term in task_text for term in ("search query", "input", "search input"))
+    )
+
+
+def _evidence_claims_enter(proposal: ActionProposal) -> bool:
+    evidence = proposal.evidence.lower()
+    enter_phrases = (
+        "press enter",
+        "pressed enter",
+        "pressing enter",
+        "enter key",
+        "return key",
+    )
+    return any(phrase in evidence for phrase in enter_phrases)
 
 
 def _candidate_by_id(bundle: ObservationBundle, candidate_id: str) -> Candidate | None:
