@@ -138,5 +138,5 @@ def test_actor_system_prompt_contains_typing_rule():
     )
     messages = build_actor_messages(b)
     system = messages[0]["content"]
-    assert "type" in system.lower()
-    assert "focused input" in system.lower() or "typing subtask" in system.lower()
+    assert "When the subtask asks you to type or enter text" in system
+    assert '{"type":"type"' in system
