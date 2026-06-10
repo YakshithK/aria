@@ -1,23 +1,18 @@
 from __future__ import annotations
 
 import json
-import re as _re
+import re
 from collections.abc import Callable
 from typing import Any, Protocol
 
 from pydantic import ValidationError
 
+from aria.harness._typing_utils import is_typing_subtask as _is_typing_subtask
 from aria.harness.config import ModelConfig
 from aria.harness.images import load_image_bytes
 from aria.harness.models import ActionProposal, ObservationBundle, VerificationResult
 from aria.harness.prompt import build_actor_messages, build_verifier_messages
 from aria.harness.usage import ModelUsage, extract_model_usage
-
-_TYPING_SUBTASK_RE = _re.compile(r"^\s*type\b", _re.IGNORECASE)
-
-
-def _is_typing_subtask(subtask: str) -> bool:
-    return bool(_TYPING_SUBTASK_RE.match(subtask))
 
 
 class CompletionClient(Protocol):
@@ -304,8 +299,8 @@ def _repair_messages(
     if _is_typing_subtask(subtask):
         instruction = (
             f"Your previous action is invalid: {reason}. "
-            "The subtask asks you to type text. "
-            'Return exactly one {"type":"type","text":"<the text to type>","confidence":0.8,"evidence":"..."} action. '
+            f'The subtask is: "{subtask}". '
+            'Return exactly one {"type":"type","text":"<text from the subtask>","confidence":0.8,"evidence":"..."} action. '
             "Do not return a click or click_element action."
         )
     else:

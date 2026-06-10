@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from aria.harness._typing_utils import is_typing_subtask as _is_typing_subtask
 from aria.harness.models import ActionProposal, Candidate, ObservationBundle, ValidationResult
 
 
@@ -27,11 +28,6 @@ _DESTRUCTIVE_TERMS = frozenset(
         "secret",
     }
 )
-_TYPING_SUBTASK_RE = re.compile(r"^\s*type\b", re.IGNORECASE)
-
-
-def _is_typing_subtask(subtask: str) -> bool:
-    return bool(_TYPING_SUBTASK_RE.match(subtask))
 
 
 def validate_action(

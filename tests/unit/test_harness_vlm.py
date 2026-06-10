@@ -480,6 +480,7 @@ def test_repair_message_is_typing_specific_for_type_subtask():
     )
 
     repair_instruction = result[-1]["content"]
-    assert "type" in repair_instruction.lower()
+    assert '"type":"type"' in repair_instruction or '"type": "type"' in repair_instruction
+    assert "text" in repair_instruction  # repair example must show text field
     # must NOT encourage clicking
     assert "raw click" not in repair_instruction.lower()
