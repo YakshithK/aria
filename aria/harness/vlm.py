@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re as _re
 from collections.abc import Callable
 from typing import Any, Protocol
 
@@ -11,6 +12,12 @@ from aria.harness.images import load_image_bytes
 from aria.harness.models import ActionProposal, ObservationBundle, VerificationResult
 from aria.harness.prompt import build_actor_messages, build_verifier_messages
 from aria.harness.usage import ModelUsage, extract_model_usage
+
+_TYPING_SUBTASK_RE = _re.compile(r"^\s*type\b", _re.IGNORECASE)
+
+
+def _is_typing_subtask(subtask: str) -> bool:
+    return bool(_TYPING_SUBTASK_RE.match(subtask))
 
 
 class CompletionClient(Protocol):
@@ -104,7 +111,7 @@ class JsonVLMActor:
                 return proposal
             repair_response = self.client.create_completion(
                 model=self.model,
-                messages=_repair_messages(messages, proposal, repair_reason),
+                messages=_repair_messages(messages, proposal, repair_reason, subtask=observation.subtask),
                 temperature=0,
             )
             self._record_usage(repair_response)
@@ -291,18 +298,26 @@ def _repair_messages(
     messages: list[dict[str, Any]],
     proposal: ActionProposal,
     reason: str,
+    *,
+    subtask: str = "",
 ) -> list[dict[str, Any]]:
+    if _is_typing_subtask(subtask):
+        instruction = (
+            f"Your previous action is invalid: {reason}. "
+            "The subtask asks you to type text. "
+            'Return exactly one {"type":"type","text":"<the text to type>","confidence":0.8,"evidence":"..."} action. '
+            "Do not return a click or click_element action."
+        )
+    else:
+        instruction = (
+            f"Your previous action is invalid: {reason}. Return exactly one corrected JSON action. "
+            "Use a raw click with screenshot coordinates when no listed candidate_id exists. "
+            "Do not invent candidate IDs."
+        )
     return [
         *messages,
         {"role": "assistant", "content": proposal.model_dump_json(exclude_none=True)},
-        {
-            "role": "user",
-            "content": (
-                f"Your previous action is invalid: {reason}. Return exactly one corrected JSON action. "
-                "Use a raw click with screenshot coordinates when no listed candidate_id exists. "
-                "Do not invent candidate IDs."
-            ),
-        },
+        {"role": "user", "content": instruction},
     ]
 
 

@@ -460,3 +460,26 @@ def test_json_vlm_verifier_returns_failed_result_for_malformed_response():
     assert result.status == "failed"
     assert result.confidence == 1.0
     assert "json" in result.evidence.lower()
+
+
+def test_repair_message_is_typing_specific_for_type_subtask():
+    from aria.harness.vlm import _repair_messages
+    from aria.harness.models import ActionProposal
+
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": '{"subtask": "Type aria into the focused search input"}'},
+    ]
+    proposal = ActionProposal(type="click", x=500, y=300, confidence=0.9, evidence="visible")
+
+    result = _repair_messages(
+        messages,
+        proposal,
+        "click blocked for typing subtask",
+        subtask="Type aria into the focused search input",
+    )
+
+    repair_instruction = result[-1]["content"]
+    assert "type" in repair_instruction.lower()
+    # must NOT encourage clicking
+    assert "raw click" not in repair_instruction.lower()
