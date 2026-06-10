@@ -1,5 +1,5 @@
-from aria.harness.models import ActionProposal, Candidate, ObservationBundle
-from aria.harness.validate import validate_action
+from aria.harness.models import ActionProposal, Candidate, ObservationBundle, ActionRecord
+from aria.harness.validate import validate_action, _is_typing_subtask
 
 
 def make_bundle(label: str = "Search", *, bounds_space: str = "screen") -> ObservationBundle:
@@ -469,3 +469,109 @@ def test_repeated_identical_action_is_rejected():
 
     assert result.ok is False
     assert "repeated" in result.reason.lower()
+
+
+def make_typing_bundle() -> ObservationBundle:
+    return ObservationBundle(
+        goal="search the web for aria",
+        subtask="Type aria into the focused search input",
+        success_condition="text aria is typed in the search input",
+        screenshot_path="/tmp/screen.png",
+        screen_size=(1280, 720),
+        focused_window=None,
+        windows=[],
+        candidates=[],
+        recent_actions=[],
+        turn=1,
+    )
+
+
+def make_typing_bundle_with_click_candidate() -> ObservationBundle:
+    bundle = make_typing_bundle()
+    bundle.candidates = [
+        Candidate(
+            id="candidate_1",
+            backend_id="cdp:chrome:abc:nodeId_5",
+            source="cdp_ax",
+            role="button",
+            label="Search",
+            bounds=(100, 100, 80, 30),
+            bounds_space="screen",
+            actions=["click_element"],
+            confidence=0.9,
+            visible=True,
+            window_id=None,
+        )
+    ]
+    return bundle
+
+
+def test_is_typing_subtask_detects_type_verb():
+    assert _is_typing_subtask("Type aria into the focused search input") is True
+    assert _is_typing_subtask("type the query") is True
+    assert _is_typing_subtask("Type query") is True
+
+
+def test_is_typing_subtask_does_not_match_non_typing():
+    assert _is_typing_subtask("Click the search button") is False
+    assert _is_typing_subtask("Focus the search input") is False
+    assert _is_typing_subtask("Submit the search form") is False
+
+
+def test_raw_click_is_rejected_for_typing_subtask():
+    result = validate_action(
+        ActionProposal(type="click", x=500, y=300, confidence=0.9, evidence="visible"),
+        make_typing_bundle(),
+    )
+    assert result.ok is False
+    assert "typing subtask" in result.reason.lower()
+
+
+def test_click_element_is_rejected_for_typing_subtask():
+    result = validate_action(
+        ActionProposal(
+            type="click_element",
+            candidate_id="candidate_1",
+            confidence=0.9,
+            evidence="visible",
+        ),
+        make_typing_bundle_with_click_candidate(),
+    )
+    assert result.ok is False
+    assert "typing subtask" in result.reason.lower()
+
+
+def test_type_action_is_accepted_for_typing_subtask():
+    bundle = make_typing_bundle()
+    bundle.recent_actions = [
+        ActionRecord(
+            turn=1,
+            action={"type": "click", "x": 500, "y": 200},
+            result={"focused_editable": True},
+        )
+    ]
+    result = validate_action(
+        ActionProposal(type="type", text="aria", confidence=0.9, evidence="input focused"),
+        bundle,
+    )
+    assert result.ok is True
+
+
+def test_non_typing_subtask_raw_click_still_allowed_when_no_candidates():
+    bundle = ObservationBundle(
+        goal="Search",
+        subtask="Click the visible Search button",
+        success_condition="search visible",
+        screenshot_path="/tmp/s.png",
+        screen_size=(1280, 720),
+        focused_window=None,
+        windows=[],
+        candidates=[],
+        recent_actions=[],
+        turn=1,
+    )
+    result = validate_action(
+        ActionProposal(type="click", x=500, y=300, confidence=0.9, evidence="visible"),
+        bundle,
+    )
+    assert result.ok is True

@@ -27,6 +27,11 @@ _DESTRUCTIVE_TERMS = frozenset(
         "secret",
     }
 )
+_TYPING_SUBTASK_RE = re.compile(r"^\s*type\b", re.IGNORECASE)
+
+
+def _is_typing_subtask(subtask: str) -> bool:
+    return bool(_TYPING_SUBTASK_RE.match(subtask))
 
 
 def validate_action(
@@ -41,10 +46,14 @@ def validate_action(
         return _reject("repeated identical action blocked")
 
     if proposal.type == "click_element":
+        if _is_typing_subtask(bundle.subtask):
+            return _reject("click_element blocked for typing subtask; use type or type_into_element")
         return _validate_click_element(proposal, bundle)
     if proposal.type == "type_into_element":
         return _validate_type_into_element(proposal, bundle)
     if proposal.type == "click":
+        if _is_typing_subtask(bundle.subtask):
+            return _reject("raw click blocked for typing subtask; use type action")
         if _is_focused_submit_context(bundle) or _evidence_claims_enter(proposal):
             return _reject("focused submit should use key_combo ENTER, not raw click")
         return _validate_click(proposal, bundle)
