@@ -14,5 +14,6 @@ __pycache__/
 .venv/
 
 diag.txt
+handoff.md
 handoff_temp.md
 uv.lock
