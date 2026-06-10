@@ -510,12 +510,16 @@ def test_is_typing_subtask_detects_type_verb():
     assert _is_typing_subtask("Type aria into the focused search input") is True
     assert _is_typing_subtask("type the query") is True
     assert _is_typing_subtask("Type query") is True
+    assert _is_typing_subtask("Enter the search query") is True
+    assert _is_typing_subtask("enter text into the field") is True
 
 
 def test_is_typing_subtask_does_not_match_non_typing():
     assert _is_typing_subtask("Click the search button") is False
     assert _is_typing_subtask("Focus the search input") is False
     assert _is_typing_subtask("Submit the search form") is False
+    assert _is_typing_subtask("Navigate to the settings page") is False
+    assert _is_typing_subtask("Submit the form") is False
 
 
 def test_raw_click_is_rejected_for_typing_subtask():
