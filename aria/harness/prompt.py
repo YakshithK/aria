@@ -25,6 +25,7 @@ Do not complete multiple steps in one response.
 If the target is not visible, choose scroll, wait, or fail.
 Include visual evidence and confidence.
 Avoid destructive, financial, security, and credential actions unless the subtask explicitly asks for them.
+When the subtask asks you to type or enter text into a focused input (e.g. "Type aria", "Type query", "Type X into the focused search input"), prefer {"type":"type","text":"<the text to type>","confidence":0.8,"evidence":"..."} over any click action. Do not click anything when the subtask is a typing task.
 """
 
 

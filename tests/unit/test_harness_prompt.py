@@ -121,3 +121,22 @@ def test_verifier_prompt_can_include_before_and_after_images():
         "data:image/png;base64,YmVmb3Jl",
         "data:image/png;base64,YWZ0ZXI=",
     ]
+
+
+def test_actor_system_prompt_contains_typing_rule():
+    b = ObservationBundle(
+        goal="search",
+        subtask="Type aria into the focused search input",
+        success_condition="text is typed",
+        screenshot_path="/tmp/s.png",
+        screen_size=(1280, 720),
+        focused_window=None,
+        windows=[],
+        candidates=[],
+        recent_actions=[],
+        turn=1,
+    )
+    messages = build_actor_messages(b)
+    system = messages[0]["content"]
+    assert "type" in system.lower()
+    assert "focused input" in system.lower() or "typing subtask" in system.lower()
