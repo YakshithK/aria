@@ -1,0 +1,11 @@
+[
+  {
+    "id": "web_search_aria",
+    "goal": "search the web for aria",
+    "mode": "task",
+    "app_hints": ["browser"],
+    "setup_notes": "Open a browser tab with the address bar visible.",
+    "expected": "Search results for aria are visible.",
+    "max_subtasks": 5
+  }
+]

@@ -205,6 +205,34 @@ def test_summarize_harness_trace_lists_turn_actions_and_artifacts():
     assert "actor image: .aria/runs/run/actor-grid.png" in summary
 
 
+def test_preview_plan_summary_omits_missing_subtask():
+    summary = summarize_harness_trace(
+        {
+            "mode": "preview_plan",
+            "goal": "search the web for aria",
+            "planner_provider": "hackclub",
+            "planner_model": "bytedance/ui-tars-1.5-7b",
+            "usage_summary": {
+                "total_tokens": 393,
+                "estimated_cost_usd": None,
+                "missing_usage_calls": 0,
+                "calls_by_role": {"planner": 1, "actor": 0, "verifier": 0},
+            },
+            "result": {
+                "status": "preview_plan",
+                "turns": 0,
+                "message": "plan accepted",
+                "action_trace": [],
+            },
+        }
+    )
+
+    assert "subtask: None" not in summary
+    assert "mode: preview_plan" in summary
+    assert "models: planner=hackclub/bytedance/ui-tars-1.5-7b" in summary
+    assert "usage: total_tokens=393" in summary
+
+
 def test_summarize_task_run_lists_subtasks():
     record = {
         "mode": "task_run",

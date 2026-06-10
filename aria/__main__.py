@@ -27,6 +27,7 @@ from aria.conductor.registry import WindowRegistry
 from aria.harness.config import DEFAULT_CONFIG_PATH, HarnessConfig, load_harness_config, save_harness_config
 from aria.harness.doctor import run_harness_doctor
 from aria.harness.diagnostics import debug_hint_for_failure
+from aria.harness.eval import EvalTask, load_eval_fixture, run_eval
 from aria.harness.execute import HarnessExecutor
 from aria.harness.observe import PillowScreenshotCapture, build_observation_bundle
 from aria.harness.pixel import WindowsPixelExecutor
@@ -311,6 +312,77 @@ def task_command(
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from exc
     _print_json(result)
+
+
+@app.command("eval")
+def eval_command(
+    fixture_path: Path = typer.Option(..., "--fixture", help="Eval fixture JSON path."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Validate fixture tasks without executing them."),
+    run_mode: bool = typer.Option(False, "--run", help="Run each fixture task through the harness task session."),
+    start_delay: float = typer.Option(1.0, "--start-delay", help="Seconds to wait before eval execution."),
+    config_path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", help="Harness config path."),
+) -> None:
+    """Run or validate harness eval fixtures."""
+    if dry_run and run_mode:
+        console.print("[red]Error:[/red] Choose only one of --dry-run or --run.")
+        raise typer.Exit(1)
+    if not dry_run and not run_mode:
+        console.print("[red]Error:[/red] Choose --dry-run or --run.")
+        raise typer.Exit(1)
+    try:
+        result = _build_eval_payload(
+            fixture_path=fixture_path,
+            dry_run=dry_run,
+            run_mode=run_mode,
+            start_delay=start_delay,
+            config_path=config_path,
+        )
+    except Exception as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    _print_json(result)
+
+
+def _build_eval_payload(
+    *,
+    fixture_path: Path,
+    dry_run: bool,
+    run_mode: bool,
+    start_delay: float,
+    config_path: Path,
+) -> dict[str, object]:
+    tasks = load_eval_fixture(fixture_path)
+    if run_mode:
+        _sleep_before_harness_capture(start_delay)
+
+    def task_runner(task: EvalTask) -> dict[str, object]:
+        return _build_task_run_payload(
+            task.goal,
+            apps=_supported_eval_apps(task.app_hints),
+            config_path=config_path,
+            approve=_confirm_preview_action,
+        )
+
+    results, summary = run_eval(
+        tasks,
+        dry_run=dry_run,
+        task_runner=task_runner,
+    )
+    mode = "dry_run" if dry_run else "run"
+    return {
+        "status": "complete",
+        "mode": mode,
+        "fixture_path": str(fixture_path),
+        "tasks": [task.model_dump() for task in tasks],
+        "results": [result.model_dump() for result in results],
+        "summary": summary.model_dump(),
+        "will_execute": run_mode,
+    }
+
+
+def _supported_eval_apps(app_hints: list[str]) -> list[str]:
+    supported = set(CDP_PORTS)
+    return [hint for hint in app_hints if hint in supported]
 
 
 def _build_task_preview_plan_payload(task: str, config_path: Path) -> dict[str, object]:

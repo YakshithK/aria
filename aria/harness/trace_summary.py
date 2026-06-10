@@ -42,11 +42,12 @@ def summarize_harness_trace(record: dict[str, Any]) -> str:
     lines = [
         f"mode: {record.get('mode')}",
         f"goal: {record.get('goal')}",
-        f"subtask: {record.get('subtask')}",
         f"status: {result.get('status')}",
         f"turns: {result.get('turns')}",
         f"message: {result.get('message')}",
     ]
+    if record.get("subtask"):
+        lines.insert(2, f"subtask: {record.get('subtask')}")
     _append_diagnostic_lines(lines, result)
     _append_model_lines(lines, record)
     _append_usage_lines(lines, result.get("usage_summary") or record.get("usage_summary"))

@@ -1000,6 +1000,110 @@ def test_build_task_preview_plan_payload_writes_trace(monkeypatch, tmp_path):
     assert result["will_execute"] is False
 
 
+def test_eval_command_dry_run_prints_summary(tmp_path):
+    fixture = tmp_path / "tasks.json"
+    fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "web_search_aria",
+                    "goal": "search the web for aria",
+                    "expected": "Search results are visible.",
+                    "setup_notes": "Open browser.",
+                }
+            ]
+        )
+    )
+
+    result = CliRunner().invoke(app, ["eval", "--fixture", str(fixture), "--dry-run"])
+
+    assert result.exit_code == 0
+    output = json.loads(result.stdout)
+    assert output["status"] == "complete"
+    assert output["mode"] == "dry_run"
+    assert output["results"][0]["status"] == "dry_run"
+    assert output["summary"]["dry_run"] == 1
+    assert output["will_execute"] is False
+
+
+def test_eval_command_run_delegates_to_task_runner(monkeypatch, tmp_path):
+    fixture = tmp_path / "tasks.json"
+    fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "web_search_aria",
+                    "goal": "search the web for aria",
+                    "expected": "Search results are visible.",
+                }
+            ]
+        )
+    )
+    calls = []
+
+    def fake_task_run(task, *, apps, config_path, approve):
+        calls.append((task, apps, config_path, approve is not None))
+        return {
+            "status": "complete",
+            "turns": 2,
+            "completed_subtasks": 3,
+            "route_mix": {"keyboard": 1},
+            "trace_path": str(tmp_path / "task.jsonl"),
+            "usage_summary": {"total_tokens": 100, "estimated_cost_usd": None},
+            "message": "done",
+        }
+
+    monkeypatch.setattr("aria.__main__._build_task_run_payload", fake_task_run)
+    monkeypatch.setattr("aria.__main__._sleep_before_harness_capture", lambda seconds: None)
+
+    result = CliRunner().invoke(
+        app,
+        ["eval", "--fixture", str(fixture), "--run", "--config", str(tmp_path / "config.json")],
+    )
+
+    assert result.exit_code == 0
+    output = json.loads(result.stdout)
+    assert calls[0][0] == "search the web for aria"
+    assert calls[0][3] is True
+    assert output["mode"] == "run"
+    assert output["summary"]["passed"] == 1
+    assert output["summary"]["route_mix"] == {"keyboard": 1}
+    assert output["summary"]["total_tokens"] == 100
+    assert output["will_execute"] is True
+
+
+def test_eval_command_requires_one_mode(tmp_path):
+    fixture = tmp_path / "tasks.json"
+    fixture.write_text("[]")
+
+    result = CliRunner().invoke(app, ["eval", "--fixture", str(fixture)])
+
+    assert result.exit_code == 1
+    assert "Choose --dry-run or --run" in result.stdout
+
+
+def test_eval_command_rejects_multiple_modes(tmp_path):
+    fixture = tmp_path / "tasks.json"
+    fixture.write_text("[]")
+
+    result = CliRunner().invoke(
+        app,
+        ["eval", "--fixture", str(fixture), "--dry-run", "--run"],
+    )
+
+    assert result.exit_code == 1
+    assert "Choose only one" in result.stdout
+
+
+def test_eval_command_reports_missing_fixture(tmp_path):
+    missing = tmp_path / "missing.json"
+
+    result = CliRunner().invoke(app, ["eval", "--fixture", str(missing), "--dry-run"])
+
+    assert result.exit_code == 1
+    assert "No such file" in result.stdout or "does not exist" in result.stdout
+
+
 def test_build_task_preview_plan_payload_reports_invalid_plan(monkeypatch, tmp_path):
     from aria.__main__ import _build_task_preview_plan_payload
     from aria.harness.config import HarnessConfig, save_harness_config
